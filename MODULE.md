@@ -363,7 +363,7 @@ python 01_ask.py "Ano ang ATP?"
 📘 ATP stands for adenosine triphosphate. Ito ang molecule na ginagamit ng cells para mag-store at mag-spend ng energy...
 📎 bio-week5.pdf · p.1
 
-   cache: read 0 tokens, wrote 8,320  (ask again within 5 minutes and the read goes up)
+   cache: read 0 tokens, wrote 8,322  (ask again within 5 minutes and the read goes up)
 ```
 
 Now a **different** question, within 5 minutes:
