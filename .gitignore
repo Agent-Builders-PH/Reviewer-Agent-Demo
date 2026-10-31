@@ -1,0 +1,10 @@
+# Secrets
+.env
+
+# Your quiz history stays on your laptop (created on your first quiz)
+quiz_log.csv
+
+# Python
+.venv/
+__pycache__/
+*.pyc
