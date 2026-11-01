@@ -49,6 +49,8 @@ You need Python 3.11 or newer (3.12 recommended), [uv](https://docs.astral.sh/uv
 
 `check.py` prints **PASS**, **FAIL** (with the one thing to fix) or **TODO** (not written yet).
 
+**Prefer clicking?** Run `python app.py` and open http://127.0.0.1:8766. You get the same agent in your browser: ask on a yellow pad (each source opens the PDF at the cited page), or take a quiz. Until you finish the TODOs, it tells you which one to do next.
+
 **Behind?** Copy the matching file from `solutions/` and keep going: `copy solutions\01_ask.py 01_ask.py`.
 
 **Two rules for the room:** nobody pastes an API key into the group chat, and nobody loads notes that aren't theirs.

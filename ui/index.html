@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reviewer Agent</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Kalam:wght@400;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --desk: #d9e1ea;
+  --pad: #fff4c2;
+  --pad-edge: #f1e3a0;
+  --rule: #a9c1e4;
+  --margin: #e0473b;
+  --ink: #1d3a8f;
+  --graphite: #33373d;
+  --soft: #5f6670;
+  --hi: #c4f1a4;
+  --hi-ink: #1f3d12;
+  --redpen: #cf2f25;
+  --tab: #fbeeb0;
+  --tab-off: #e7dca8;
+  --field: #fffdf1;
+  --line: 28px;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --desk: #0e131b; --pad: #1a2231; --pad-edge: #111824; --rule: #2a3a55; --margin: #a8453d;
+    --ink: #a9c6ff; --graphite: #e4e7ec; --soft: #9aa3b0; --hi: #2f5a24; --hi-ink: #d9f7c6;
+    --redpen: #ff7a70; --tab: #222c3e; --tab-off: #161d2a; --field: #121a27; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --desk: #0e131b; --pad: #1a2231; --pad-edge: #111824; --rule: #2a3a55; --margin: #a8453d;
+  --ink: #a9c6ff; --graphite: #e4e7ec; --soft: #9aa3b0; --hi: #2f5a24; --hi-ink: #d9f7c6;
+  --redpen: #ff7a70; --tab: #222c3e; --tab-off: #161d2a; --field: #121a27; color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--desk); color: var(--graphite);
+  font: 17px/var(--line) "Atkinson Hyperlegible", system-ui, sans-serif;
+}
+a { color: var(--ink); }
+button, input { font: inherit; color: inherit; }
+:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; border-radius: 4px; }
+
+.wrap { max-width: 1180px; margin: 0 auto; padding: 20px 16px 48px; }
+header { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 18px; }
+header img { height: 34px; }
+header h1 { font: 700 30px/1 Kalam, cursive; color: var(--ink); margin: 0; }
+header .who { margin-left: auto; color: var(--soft); font-size: 15px; }
+header .who b { color: var(--graphite); font-weight: 700; }
+.logo-dark { display: none; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .logo-light { display: none; } :root:not([data-theme="light"]) .logo-dark { display: inline; } }
+:root[data-theme="dark"] .logo-light { display: none; }
+:root[data-theme="dark"] .logo-dark { display: inline; }
+
+.layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 22px; align-items: start; }
+@media (max-width: 860px) { .layout { grid-template-columns: 1fr; } }
+
+/* subject tabs: index tabs on the top edge of the pad */
+.tabs { display: flex; gap: 6px; padding-left: 64px; flex-wrap: wrap; }
+.tabs button {
+  border: 0; background: var(--tab-off); color: var(--soft); padding: 6px 18px 4px;
+  border-radius: 10px 10px 0 0; cursor: pointer; font-weight: 700;
+}
+.tabs button[aria-selected="true"] { background: var(--pad); color: var(--ink); }
+
+/* the yellow pad */
+.pad {
+  position: relative; background-color: var(--pad); border-radius: 0 6px 6px 6px;
+  box-shadow: 0 1px 0 var(--pad-edge), 0 10px 30px rgb(0 0 0 / .12);
+  background-image: repeating-linear-gradient(to bottom, transparent 0, transparent calc(var(--line) - 1px), var(--rule) calc(var(--line) - 1px), var(--rule) var(--line));
+  background-position: 0 12px;
+  padding: 12px 22px 28px 76px; min-height: 560px;
+}
+.pad::before { /* the red margin line */
+  content: ""; position: absolute; top: 0; bottom: 0; left: 58px; width: 2px; background: var(--margin); opacity: .8;
+}
+@media (max-width: 560px) { .pad { padding-left: 46px; } .pad::before { left: 32px; } .tabs { padding-left: 34px; } }
+
+.modes { display: flex; gap: 8px; margin: 0 0 var(--line); }
+.modes button {
+  border: 2px solid var(--ink); background: transparent; color: var(--ink);
+  border-radius: 999px; padding: 0 16px; line-height: 30px; cursor: pointer; font-weight: 700;
+}
+.modes button[aria-pressed="true"] { background: var(--ink); color: var(--pad); }
+
+form.ask { display: flex; gap: 8px; }
+form.ask input {
+  flex: 1; min-width: 0; border: 2px solid var(--rule); background: var(--field); border-radius: 8px; padding: 6px 12px;
+}
+.btn {
+  border: 0; background: var(--ink); color: var(--pad); border-radius: 8px; padding: 0 18px; cursor: pointer; font-weight: 700;
+}
+.btn:disabled { opacity: .5; cursor: wait; }
+.try { color: var(--soft); font-size: 15px; margin: 4px 0 var(--line); }
+.try button { border: 0; background: none; color: var(--ink); text-decoration: underline dotted; cursor: pointer; padding: 0 6px 0 0; font-size: 15px; }
+
+/* entries written on the pad */
+#log { margin-top: var(--line); }
+.entry { position: relative; margin-bottom: var(--line); }
+.entry .q { color: var(--soft); }
+.entry .q b { color: var(--graphite); }
+.entry .a { color: var(--ink); white-space: pre-wrap; }
+.mark { /* teacher's red pen, in the margin */
+  position: absolute; left: -58px; top: -2px; width: 44px; text-align: center;
+  font: 700 26px/var(--line) Kalam, cursive; color: var(--redpen); transform: rotate(-8deg);
+}
+@media (max-width: 560px) { .mark { left: -44px; width: 36px; font-size: 22px; } }
+.refuse { color: var(--redpen); font-family: Kalam, cursive; font-size: 20px; }
+.sources { list-style: none; padding: 0; margin: 0; }
+.sources li { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.chip { background: var(--hi); color: var(--hi-ink); padding: 0 8px; border-radius: 3px; text-decoration: none; font-weight: 700; white-space: nowrap; }
+.chip:hover { text-decoration: underline; }
+.quote { color: var(--soft); font-style: italic; font-size: 15px; line-height: var(--line); }
+.cache { color: var(--soft); font-size: 14px; }
+.error { color: var(--redpen); font-family: Kalam, cursive; font-size: 19px; }
+.thinking { color: var(--soft); font-style: italic; }
+.thinking::after { content: "▍"; animation: blink 1s steps(2) infinite; margin-left: 2px; }
+@keyframes blink { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .thinking::after { animation: none; } }
+
+/* quiz */
+.choices { display: grid; gap: 6px; margin: 4px 0; }
+.choices button {
+  text-align: left; border: 2px solid var(--rule); background: var(--field); border-radius: 8px;
+  padding: 3px 12px; cursor: pointer; color: var(--graphite);
+}
+.choices button:hover:not(:disabled) { border-color: var(--ink); }
+.choices button:disabled { cursor: default; }
+.choices button.right { border-color: var(--hi-ink); background: var(--hi); color: var(--hi-ink); }
+.choices button.wrong { border-color: var(--redpen); text-decoration: line-through; text-decoration-color: var(--redpen); }
+.why { color: var(--graphite); }
+.score { font: 700 44px/1.2 Kalam, cursive; color: var(--redpen); display: inline-block; border: 3px solid var(--redpen); border-radius: 50%; padding: 6px 18px; transform: rotate(-6deg); margin: 6px 0; }
+
+/* side column */
+aside { display: grid; gap: 18px; }
+.card { background: var(--pad); border-radius: 6px; padding: 14px 16px; box-shadow: 0 6px 18px rgb(0 0 0 / .08); }
+.card h2 { font: 700 20px/1.2 Kalam, cursive; color: var(--ink); margin: 0 0 8px; }
+.card ul { list-style: none; margin: 0; padding: 0; }
+.card li { font-size: 15px; line-height: 24px; display: flex; justify-content: space-between; gap: 8px; }
+.card li span { color: var(--soft); white-space: nowrap; }
+.card p { font-size: 14px; line-height: 21px; color: var(--soft); margin: 8px 0 0; }
+.theme { border: 0; background: none; color: var(--soft); cursor: pointer; font-size: 14px; text-decoration: underline; padding: 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <img class="logo-light" src="/assets/ab-logo-dark.png" alt="Agent Builders Philippines">
+    <img class="logo-dark" src="/assets/ab-logo-white.png" alt="Agent Builders Philippines">
+    <h1>Reviewer Agent</h1>
+    <div class="who" id="who">Loading…</div>
+  </header>
+
+  <div class="layout">
+    <main>
+      <div class="tabs" role="tablist" id="tabs"></div>
+      <section class="pad" id="pad">
+        <div class="modes">
+          <button type="button" id="mode-ask" aria-pressed="true">Ask</button>
+          <button type="button" id="mode-quiz" aria-pressed="false">Quiz me</button>
+        </div>
+
+        <div id="ask-panel">
+          <form class="ask" id="ask-form">
+            <input id="question" aria-label="Your question" autocomplete="off" maxlength="4500" placeholder="Ask your notes a question">
+            <button class="btn" id="ask-btn">Ask</button>
+          </form>
+          <div class="try" id="try"></div>
+        </div>
+
+        <div id="quiz-panel" hidden>
+          <p>Five questions from your <b id="quiz-subject"></b> notes. Pick a letter; Python grades it.</p>
+          <button class="btn" id="quiz-start" style="line-height:34px">Start the quiz</button>
+        </div>
+
+        <div id="log" aria-live="polite"></div>
+      </section>
+    </main>
+
+    <aside>
+      <div class="card">
+        <h2>Your notes</h2>
+        <ul id="notes"></ul>
+        <p>Each source on the pad opens the note at the page Claude cited.</p>
+      </div>
+      <div class="card">
+        <h2>Quiz history</h2>
+        <ul id="history"></ul>
+        <p>Your next quiz starts with the questions you missed last time.</p>
+      </div>
+      <button class="theme" id="theme">Switch light / dark</button>
+    </aside>
+  </div>
+</div>
+
+<script>
+const EXAMPLES = {
+  "bio": ["Ano ang ATP?", "Saan nangyayari ang glycolysis?", "Sino si Rizal?"],
+  "econ": ["What happens to price when supply drops?", "What does the glossary tell you to do?"],
+  "ph-history": ["Kailan ang Sigaw?", "Who led the Katipunan?"],
+};
+const $ = (id) => document.getElementById(id);
+const logs = {};          // subject -> list of entry elements, kept when you switch tabs
+let state = null, subject = null, mode = "ask", busy = false;
+
+function el(tag, attrs = {}, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") e.className = v; else if (k === "text") e.textContent = v;
+    else if (k.startsWith("on")) e.addEventListener(k.slice(2), v); else e.setAttribute(k, v);
+  }
+  for (const k of kids) if (k != null) e.append(k);
+  return e;
+}
+
+async function api(path, body) {
+  const r = await fetch(path, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {});
+  const data = await r.json().catch(() => ({ error: "The app stopped answering. Is python app.py still running?" }));
+  if (!r.ok || data.error) throw new Error(data.error || r.statusText);
+  return data;
+}
+
+function noteLink(title, page) {
+  const href = `/note/${encodeURIComponent(subject)}/${encodeURIComponent(title)}` + (page ? `#page=${page}` : "");
+  return el("a", { class: "chip", href, target: "_blank", rel: "noopener", text: page ? `${title} · p.${page}` : title });
+}
+
+function addEntry(node) {
+  logs[subject].unshift(node);
+  $("log").prepend(node);
+}
+
+function setBusy(on) {
+  busy = on;
+  $("ask-btn").disabled = on; $("quiz-start").disabled = on;
+}
+
+// ---------------------------------------------------------------- render
+function render() {
+  const brain = state.backend === "lumen" ? "Lumen AI Chat" : "Claude";
+  $("who").innerHTML = "";
+  $("who").append("Ask: ", el("b", { text: brain }), " · Quiz: ", el("b", { text: "Claude" }), ` · ${state.model}`);
+  $("tabs").innerHTML = "";
+  for (const s of state.subjects) {
+    $("tabs").append(el("button", { role: "tab", "aria-selected": String(s.name === subject), text: s.name,
+      onclick: () => pick(s.name) }));
+  }
+  const notes = state.subjects.find((s) => s.name === subject).notes;
+  $("notes").innerHTML = "";
+  for (const n of notes) {
+    $("notes").append(el("li", {}, el("a", { href: `/note/${encodeURIComponent(subject)}/${encodeURIComponent(n.name)}`, target: "_blank", rel: "noopener", text: n.name }),
+      el("span", { text: n.pages ? `${n.pages} page${n.pages > 1 ? "s" : ""}` : "text" })));
+  }
+  $("history").innerHTML = "";
+  if (!state.history.length) $("history").append(el("li", { text: "No quizzes yet." }));
+  for (const h of state.history) {
+    $("history").append(el("li", {}, el("span", { text: h.date }), h.subject, el("b", { text: h.score })));
+  }
+  $("try").innerHTML = "";
+  const ex = EXAMPLES[subject] || [];
+  if (ex.length) {
+    $("try").append("Try: ");
+    for (const q of ex) $("try").append(el("button", { type: "button", text: q, onclick: () => { $("question").value = q; ask(); } }));
+  }
+  $("quiz-subject").textContent = subject;
+  $("log").replaceChildren(...logs[subject]);
+}
+
+function pick(name) {
+  subject = name;
+  logs[subject] = logs[subject] || [];
+  $("quiz-start").hidden = false;
+  render();
+}
+
+function setMode(m) {
+  mode = m;
+  $("mode-ask").setAttribute("aria-pressed", String(m === "ask"));
+  $("mode-quiz").setAttribute("aria-pressed", String(m === "quiz"));
+  $("ask-panel").hidden = m !== "ask";
+  $("quiz-panel").hidden = m !== "quiz";
+  (m === "ask" ? $("question") : $("quiz-start")).focus();
+}
+
+// ---------------------------------------------------------------- ask
+async function ask() {
+  const question = $("question").value.trim();
+  if (!question || busy) return;
+  const entry = el("div", { class: "entry" }, el("div", { class: "q" }, el("b", { text: "Q: " }), question),
+    el("div", { class: "thinking", text: "Reading your notes" }));
+  addEntry(entry);
+  setBusy(true);
+  try {
+    const r = await api("/api/ask", { subject, question });
+    entry.lastChild.remove();
+    if (r.refused) {
+      entry.append(el("div", { class: "mark", text: "✗", "aria-hidden": "true" }), el("div", { class: "refuse", text: r.reply.replace(/^⚠️\s*/, "") }));
+    } else {
+      entry.append(el("div", { class: "a", text: r.text }));
+      const ul = el("ul", { class: "sources" });
+      for (const s of r.sources) {
+        ul.append(el("li", {}, noteLink(s.title, s.page), s.quote ? el("span", { class: "quote", text: `“${s.quote.slice(0, 90)}${s.quote.length > 90 ? "…" : ""}”` }) : null));
+      }
+      entry.append(ul);
+      if (r.degraded.length) entry.append(el("div", { class: "error", text: "Some sources were offline: " + r.degraded.join(", ") }));
+    }
+    if (r.brain === "Claude") {
+      const c = r.cache_write > r.cache_read ? `notes saved to cache: ${r.cache_write.toLocaleString()} tokens (the next question reads them)`
+        : r.cache_read ? `notes read from cache: ${r.cache_read.toLocaleString()} tokens` : "";
+      if (c) entry.append(el("div", { class: "cache", text: c }));
+    } else {
+      entry.append(el("div", { class: "cache", text: "answered by Lumen AI Chat" }));
+    }
+    $("question").value = "";
+  } catch (e) {
+    entry.lastChild.remove();
+    entry.append(el("div", { class: "error", text: e.message }));
+  } finally {
+    setBusy(false);
+    $("question").focus();
+  }
+}
+
+// ---------------------------------------------------------------- quiz
+async function startQuiz() {
+  if (busy) return;
+  const forSubject = subject;
+  const entry = el("div", { class: "entry" }, el("div", { class: "thinking", text: `Writing your ${subject} quiz` }));
+  addEntry(entry);
+  setBusy(true);
+  try {
+    const quiz = await api("/api/quiz/start", { subject: forSubject });
+    $("quiz-start").hidden = true;
+    entry.replaceChildren();
+    if (quiz.focus) entry.append(el("div", { class: "q", text: `Starting with ${quiz.focus} you missed last time.` }));
+    showQuestion(entry, quiz, 0);
+  } catch (e) {
+    entry.replaceChildren(el("div", { class: "error", text: e.message }));
+  } finally {
+    setBusy(false);
+  }
+}
+
+function showQuestion(entry, quiz, n) {
+  const q = quiz.questions[n];
+  const box = el("div", { class: "entry" });
+  const choices = el("div", { class: "choices" });
+  const buttons = {};
+  for (const letter of ["a", "b", "c"]) {
+    buttons[letter] = el("button", { type: "button", text: `${letter})  ${q[letter]}`, onclick: () => answer(letter) });
+    choices.append(buttons[letter]);
+  }
+  box.append(el("div", {}, el("b", { text: `Q${n + 1} of ${quiz.questions.length}. ` }), q.question), choices);
+  entry.append(box);
+  buttons.a.focus();
+
+  async function answer(letter) {
+    Object.values(buttons).forEach((b) => (b.disabled = true));
+    try {
+      const r = await api("/api/quiz/answer", { id: quiz.id, n, letter });
+      buttons[r.answer].classList.add("right");
+      if (!r.correct) buttons[letter].classList.add("wrong");
+      box.prepend(el("div", { class: "mark", text: r.correct ? "✓" : "✗", "aria-label": r.correct ? "correct" : "wrong" }));
+      const why = el("div", { class: "why" }, r.correct ? "Tama! " : `The answer is ${r.answer}. `, r.why, " ");
+      why.append(noteLinkFor(quiz.subject, r.page));
+      box.append(why);
+      if (r.done) {
+        entry.append(el("div", {}, el("div", { class: "score", text: `${r.score}/${r.total}` }),
+          el("div", { class: "cache", text: "Saved to quiz_log.csv." })));
+        $("quiz-start").textContent = "Start another quiz";
+        $("quiz-start").hidden = false;
+        refreshHistory();
+      } else {
+        const next = el("button", { class: "btn", style: "line-height:32px;margin-top:4px", text: "Next question",
+          onclick: () => { next.remove(); showQuestion(entry, quiz, n + 1); } });
+        box.append(next);
+        next.focus();
+      }
+    } catch (e) {
+      box.append(el("div", { class: "error", text: e.message }));
+    }
+  }
+}
+
+function noteLinkFor(subj, page) {
+  // A quiz page has no file name: link the subject's first PDF with that many pages.
+  const notes = state.subjects.find((s) => s.name === subj).notes;
+  const pdf = notes.find((n) => n.pages && n.pages >= page) || notes[0];
+  const saved = subject; subject = subj;
+  const a = noteLink(pdf.name, pdf.pages ? page : null);
+  subject = saved;
+  return a;
+}
+
+async function refreshHistory() {
+  try { state = { ...state, history: (await api("/api/state")).history }; } catch { return; }
+  $("history").innerHTML = "";
+  for (const h of state.history) $("history").append(el("li", {}, el("span", { text: h.date }), h.subject, el("b", { text: h.score })));
+}
+
+// ---------------------------------------------------------------- start
+$("ask-form").addEventListener("submit", (e) => { e.preventDefault(); ask(); });
+$("mode-ask").addEventListener("click", () => setMode("ask"));
+$("mode-quiz").addEventListener("click", () => setMode("quiz"));
+$("quiz-start").addEventListener("click", startQuiz);
+$("theme").addEventListener("click", () => {
+  const dark = document.documentElement.dataset.theme
+    ? document.documentElement.dataset.theme === "dark"
+    : matchMedia("(prefers-color-scheme: dark)").matches;
+  document.documentElement.dataset.theme = dark ? "light" : "dark";
+});
+
+api("/api/state").then((s) => { state = s; pick(s.subjects[0].name); $("question").focus(); })
+  .catch((e) => { $("who").textContent = e.message; });
+</script>
+</body>
+</html>

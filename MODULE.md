@@ -239,6 +239,8 @@ Phase 3
 
 **TODO** lines are normal: they're the work ahead of you. Only **FAIL** lines need fixing now. Phase 3's offline lines already pass: they test code that's given to you.
 
+> **Prefer clicking?** `python app.py` opens the same agent in your browser (see the end of §6). Before you finish the TODOs, it tells you which one to do next.
+
 > **Local Python broken?** Open the repo in GitHub Codespaces (Code → Codespaces → Create). The devcontainer installs everything; then add your key to `.env`.
 
 ### How `check.py` works
@@ -590,6 +592,21 @@ Writing your bio quiz...
 
 Read the router in `chat()`: one `if` for "quiz me", and everything else goes to `ask_once()`. `ask_once()` refuses a too-long question first (case 8), then calls `backend.ask()` and passes the answer through your guard.
 
+### The same agent in your browser
+
+```powershell
+python app.py
+```
+
+Your browser opens http://127.0.0.1:8766 (if it doesn't, open that address yourself). You get the same agent on a yellow pad:
+
+- **Tabs** for each subject, and a list of that subject's notes on the right.
+- **Ask:** type a question, or click one of the *Try* examples. The answer is written on the pad. Each green chip is a source: click it, and the PDF opens **at the page Claude cited**. A refusal shows in red pen.
+- **Quiz me:** one question at a time. Pick a, b or c, and the red-pen ✓ or ✗ appears in the margin, with the reason and a link to the page. The score is saved to `quiz_log.csv` and shows under *Quiz history*.
+- Under each answer, a small line shows the cache at work: *saved to cache* on the first question, *read from cache* after that.
+
+It runs the same code as `reviewer.py`: your `ASK_RULES`, your agent, your guard, your `is_correct()`. The right quiz letters stay in Python; the page only learns them after you pick. The app picks up your edits to `01_ask.py` and `02_quiz.py` as soon as you save, so there's no need to restart it. It only listens on your own laptop (127.0.0.1), and you stop it with Ctrl+C.
+
 ---
 
 ## 7. Same agent, Lumen brain (host demo)
@@ -714,6 +731,7 @@ python check.py
 | `Claude's quiz failed the check twice` | Claude kept writing the wrong number of questions or a page that doesn't exist | Run it again; if it repeats, check `QUIZ_RULES` wasn't changed |
 | `Unknown subject 'chem'` | A new folder isn't in `SUBJECTS` | Add it to `SUBJECTS` in `config.py` (§8) |
 | Emoji show as `?` | An old Windows console | Use Windows Terminal, or run `chcp 65001` first |
+| `python app.py` says the address is already in use | The app is already running in another terminal | Use the open one, or stop it with Ctrl+C. Or pick another port: `$env:REVIEWER_PORT="8767"; python app.py` |
 
 ---
 
