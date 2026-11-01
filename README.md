@@ -37,7 +37,7 @@ python check.py
 
 macOS / Linux: `source .venv/bin/activate` and `cp .env.example .env`. No uv? `python -m venv .venv` and `pip install -r requirements.txt` work too.
 
-You need Python 3.11 or newer (3.12 recommended), [uv](https://docs.astral.sh/uv/), and an Anthropic API key. That's all: the Lumen keys stay with the host. `check.py` should end with `✅ setup ok · next: phase 1 of 3`.
+You need Python 3.11 or newer (3.12 recommended), [uv](https://docs.astral.sh/uv/), an Anthropic API key, and the Lumen AI Chat key, secret and instance IDs the host sends you. You build on Claude, then switch Ask to Lumen in MODULE §7. `check.py` should end with `✅ setup ok · next: phase 1 of 3`.
 
 ## The three phases
 

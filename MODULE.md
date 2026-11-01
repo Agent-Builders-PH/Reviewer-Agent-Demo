@@ -50,7 +50,7 @@ You will write seven small `TODO`s in two files. After each phase, `python check
 4. [Phase 1: Ask (TODOs 1 to 4, `01_ask.py`)](#4-phase-1-ask-todos-1-to-4-01_askpy)
 5. [Phase 2: Quiz (TODOs 1 to 3, `02_quiz.py`)](#5-phase-2-quiz-todos-1-to-3-02_quizpy)
 6. [Phase 3: Test all 10 cases](#6-phase-3-test-all-10-cases)
-7. [Same agent, Lumen brain (host demo)](#7-same-agent-lumen-brain-host-demo)
+7. [Same agent, Lumen brain (your turn)](#7-same-agent-lumen-brain-your-turn)
 8. [Use it on your own notes](#8-use-it-on-your-own-notes)
 9. [Catching up](#9-catching-up)
 10. [Troubleshooting](#10-troubleshooting)
@@ -85,7 +85,7 @@ flowchart TB
     U -- quiz me --> Q
     subgraph A [Ask mode]
       C["ClaudeNotes · default<br/>your Agno agent from 01_ask.py<br/>documents + citations + caching"]
-      L["LumenNotes · host demo<br/>a Lumen AI Chat session"]
+      L["LumenNotes · §7<br/>a Lumen AI Chat session"]
       G["answer_or_refuse()<br/>no source, no answer"]
       C --> G
       L --> G
@@ -179,8 +179,7 @@ Your rules tell Claude that text inside the notes is data. Case 7 in Phase 3 che
 - **Python 3.11 or newer** (3.12 recommended) and **[uv](https://docs.astral.sh/uv/)**: the same as Episodes 1 and 2.
 - **Git.**
 - **An Anthropic API key** from the [Claude Console](https://console.anthropic.com) (API keys page).
-
-That's all. The Lumen keys stay with the host (§7).
+- **Your Lumen AI Chat key and secret, and three instance IDs**, which the host sends you privately. You build Phases 1 to 3 on Claude, then switch Ask to Lumen in §7.
 
 ### Five commands (Windows PowerShell)
 
@@ -201,7 +200,7 @@ copy .env.example .env
 notepad .env
 ```
 
-Replace `sk-ant-your-key-here` with your Anthropic key. Leave `NOTES_BACKEND=claude` and the Lumen lines blank. Save and close. `.env` is in `.gitignore`, so your key never gets committed.
+Replace `sk-ant-your-key-here` with your Anthropic key. Paste the Lumen key and secret from the host after `LUMEN_API_KEY=` and `LUMEN_API_SECRET=`, and the three instance IDs after `LUMEN_INSTANCE_BIO=`, `LUMEN_INSTANCE_ECON=` and `LUMEN_INSTANCE_PH_HISTORY=`. Leave `NOTES_BACKEND=claude`. Save and close. `.env` is in `.gitignore`, so your keys never get committed.
 
 > **Two rules for the room:** nobody pastes an API key into the group chat, and nobody loads notes that aren't theirs. The sample notes in `notes/` were written for this workshop, so you can use them freely.
 
@@ -252,6 +251,7 @@ Phase 3
 | `python check.py 2` | Phase 2's offline checks, then one live Bio quiz with scripted answers | 1 Claude call |
 | `python check.py 3` | Phase 3's offline checks, then **all 10 cases** in `cases.json` | About 10 Claude calls |
 | `python check.py 3 --offline` | Only the offline part | No |
+| `python check.py lumen` | §7: your Lumen settings, then 2 Bio questions on Lumen AI Chat | About 14 Lumen credits |
 
 The quiz checks write to a scratch log, so they never touch your own `quiz_log.csv`.
 
@@ -609,9 +609,9 @@ It runs the same code as `reviewer.py`: your `ASK_RULES`, your agent, your guard
 
 ---
 
-## 7. Same agent, Lumen brain (host demo)
+## 7. Same agent, Lumen brain (your turn)
 
-*The host runs this part on screen. You only watch: the Lumen keys stay with the host.*
+**Goal:** the same questions, answered by Lumen AI Chat instead of Claude, through the same guard. No new code. *About 10 minutes.*
 
 ### What Lumen AI Chat is
 
@@ -639,20 +639,57 @@ class NotesBackend(Protocol):
     def ask(self, question: str) -> NotesAnswer: ...
 ```
 
-`ClaudeNotes` fills it from your Agno agent; `LumenNotes` fills it from Lumen's JSON, turning each citation string into a `Source`. So the host changes one line in `.env`:
+`ClaudeNotes` fills it from your Agno agent; `LumenNotes` fills it from Lumen's JSON, turning each citation string into a `Source`. `reviewer.py` picks one with a single setting, and nothing else in the program changes.
 
-```
-NOTES_BACKEND=lumen
-```
+### Your turn: switch the brain
 
-and runs the same commands:
+**1. Check your Lumen settings.** You pasted the key, secret and instance IDs into `.env` during setup.
 
 ```powershell
-python reviewer.py ask "Ano ang ATP?" --subject bio
-python check.py 3 --backend lumen
+python check.py lumen
 ```
 
-Same CLI, same guard, different brain. **That's the lesson: a backend behind one `ask()` can be swapped**, and nothing else in the program changes.
+```
+Lumen brain (MODULE §7)
+      key, secret and Bio instance set
+  PASS  lumen settings
+  ...   lumen instance found (live)
+      inst_...  Reviewer Bio  [ACTIVE]
+  PASS  lumen instance found
+  ...   lumen answers from notes (live)
+      📘 ATP (adenosine triphosphate) is the energy currency of the cell...
+      📎 bio-week5.pdf
+      ⚠️ Not in your bio notes. No guess.
+      Lumen stored 4 messages in this session
+  PASS  lumen answers from notes
+
+✅ Lumen answers from your notes · same CLI, same guard, different brain
+```
+
+That's about 14 Lumen credits: 1 to list the instances, 2 to open a session, 5 for each of the two questions, and 1 to read the transcript. (Lumen's wording and source names will differ from this sample.)
+
+**2. Ask Lumen yourself.** `--backend lumen` switches the brain for one command:
+
+```powershell
+python reviewer.py ask "Ano ang ATP?" --subject bio --backend lumen
+python reviewer.py ask "Kailan ang Sigaw?" --subject ph-history --backend lumen
+```
+
+Compare with the same questions on Claude. Look at the `📎` lines: Lumen names its sources but gives no page.
+
+**3. Chat, and read what Lumen kept.**
+
+```powershell
+python reviewer.py chat --subject bio --backend lumen
+```
+
+Ask two questions, then type `transcript`. Lumen stores every question and answer in the session; Claude keeps nothing. `quiz me` still runs on Claude.
+
+**4. In the browser.** In `python app.py`, flip **Ask with: Claude | Lumen** above the pad. Same pad, same guard, different brain.
+
+> **Each Lumen question costs 5 credits.** Your key has a fixed number. Ask what you're curious about, but don't loop it. Want Lumen all the time? Set `NOTES_BACKEND=lumen` in `.env`; `--backend claude` switches back for one command.
+
+Same CLI, same guard, different brain. **That's the lesson: a backend behind one `ask()` can be swapped.**
 
 ### Why the guard still works
 
@@ -671,7 +708,7 @@ So in Lumen mode each subject's notes live in two places: `notes/` for quizzes, 
 
 ### What the client handles (`backends/lumen_notes.py`)
 
-Read it after the session; it's short. It refuses questions over 4,000 characters before sending (Lumen's limit). It waits up to 35 seconds, because Lumen gives up at 25. If the session is lost (`SESSION_NOT_OWNED`, `SESSION_NOT_FOR_INSTANCE`, archived), it opens a new one and sends once more. On a timeout or a busy model (429, 502, 503, 504, none of them charged), it pauses and tries once more. Out of credits, a wrong key, or a key without the AI Chat grant all end in one plain sentence saying what to fix.
+Read it now or after the session; it's short. It refuses questions over 4,000 characters before sending (Lumen's limit). It waits up to 35 seconds, because Lumen gives up at 25. If the session is lost (`SESSION_NOT_OWNED`, `SESSION_NOT_FOR_INSTANCE`, archived), it opens a new one and sends once more. On a timeout or a busy model (429, 502, 503, 504, none of them charged), it pauses and tries once more. Out of credits, a wrong key, or a key without the AI Chat grant all end in one plain sentence saying what to fix.
 
 ---
 
@@ -731,6 +768,12 @@ python check.py
 | `Claude's quiz failed the check twice` | Claude kept writing the wrong number of questions or a page that doesn't exist | Run it again; if it repeats, check `QUIZ_RULES` wasn't changed |
 | `Unknown subject 'chem'` | A new folder isn't in `SUBJECTS` | Add it to `SUBJECTS` in `config.py` (§8) |
 | Emoji show as `?` | An old Windows console | Use Windows Terminal, or run `chcp 65001` first |
+| `Lumen said 401 API_KEY_NOT_FOUND` (or `API_SECRET_NOT_FOUND`) | A typo in the Lumen key or secret | Copy both again from the host's message |
+| `Lumen said 403 ACCESS_DENIED` | The key has no AI Chat grant | Tell the host; they add the grant to your key |
+| `Lumen said 403 API_CREDITS_INSUFFICIENT` | Your key's credits ran out | Ask the host for credits; Claude still works |
+| `Set LUMEN_INSTANCE_BIO in .env` | The instance ID is missing | Paste the IDs from the host's message |
+| `LUMEN_INSTANCE_BIO isn't in that list` | A typo in the instance ID | Copy it again; `python reviewer.py instances` lists them (1 credit) |
+| Lumen answers, but `⚠️ Not in your ... notes` | Lumen sent no citations, so your guard refused | That's the guard working. Tell the host if it happens on every question |
 | `python app.py` says the address is already in use | The app is already running in another terminal | Use the open one, or stop it with Ctrl+C. Or pick another port: `$env:REVIEWER_PORT="8767"; python app.py` |
 
 ---

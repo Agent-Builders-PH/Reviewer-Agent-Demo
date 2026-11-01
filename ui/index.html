@@ -89,6 +89,12 @@ header .who b { color: var(--graphite); font-weight: 700; }
   border-radius: 999px; padding: 0 16px; line-height: 30px; cursor: pointer; font-weight: 700;
 }
 .modes button[aria-pressed="true"] { background: var(--ink); color: var(--pad); }
+.brain { margin-left: auto; display: flex; gap: 0; align-items: center; color: var(--soft); font-size: 15px; }
+.brain span { margin-right: 8px; }
+.brain button { border-radius: 0; padding: 0 12px; line-height: 26px; border-width: 2px; font-size: 15px; }
+.brain button:first-of-type { border-radius: 999px 0 0 999px; }
+.brain button:last-of-type { border-radius: 0 999px 999px 0; border-left-width: 0; }
+.modes { flex-wrap: wrap; align-items: center; }
 
 form.ask { display: flex; gap: 8px; }
 form.ask input {
@@ -165,6 +171,11 @@ aside { display: grid; gap: 18px; }
         <div class="modes">
           <button type="button" id="mode-ask" aria-pressed="true">Ask</button>
           <button type="button" id="mode-quiz" aria-pressed="false">Quiz me</button>
+          <div class="brain" id="brain" role="group" aria-label="Who answers Ask questions">
+            <span>Ask with</span>
+            <button type="button" data-brain="claude" aria-pressed="true">Claude</button>
+            <button type="button" data-brain="lumen" aria-pressed="false">Lumen</button>
+          </div>
         </div>
 
         <div id="ask-panel">
@@ -208,7 +219,8 @@ const EXAMPLES = {
 };
 const $ = (id) => document.getElementById(id);
 const logs = {};          // subject -> list of entry elements, kept when you switch tabs
-let state = null, subject = null, mode = "ask", busy = false;
+let state = null, subject = null, mode = "ask", busy = false, brain = "claude";
+const BRAIN_NAME = { claude: "Claude", lumen: "Lumen AI Chat" };
 
 function el(tag, attrs = {}, ...kids) {
   const e = document.createElement(tag);
@@ -244,9 +256,9 @@ function setBusy(on) {
 
 // ---------------------------------------------------------------- render
 function render() {
-  const brain = state.backend === "lumen" ? "Lumen AI Chat" : "Claude";
   $("who").innerHTML = "";
-  $("who").append("Ask: ", el("b", { text: brain }), " · Quiz: ", el("b", { text: "Claude" }), ` · ${state.model}`);
+  $("who").append("Ask: ", el("b", { text: BRAIN_NAME[brain] }), " · Quiz: ", el("b", { text: "Claude" }), ` · ${state.model}`);
+  for (const b of document.querySelectorAll("#brain button")) b.setAttribute("aria-pressed", String(b.dataset.brain === brain));
   $("tabs").innerHTML = "";
   for (const s of state.subjects) {
     $("tabs").append(el("button", { role: "tab", "aria-selected": String(s.name === subject), text: s.name,
@@ -285,6 +297,7 @@ function setMode(m) {
   $("mode-ask").setAttribute("aria-pressed", String(m === "ask"));
   $("mode-quiz").setAttribute("aria-pressed", String(m === "quiz"));
   $("ask-panel").hidden = m !== "ask";
+  $("brain").hidden = m !== "ask";
   $("quiz-panel").hidden = m !== "quiz";
   (m === "ask" ? $("question") : $("quiz-start")).focus();
 }
@@ -298,7 +311,13 @@ async function ask() {
   addEntry(entry);
   setBusy(true);
   try {
-    const r = await api("/api/ask", { subject, question });
+    if (brain === "lumen" && !state.lumen[subject]) {
+      const env = "LUMEN_INSTANCE_" + subject.toUpperCase().replace("-", "_");
+      throw new Error(Object.keys(state.lumen).length
+        ? `No Lumen instance for ${subject} yet. Paste its ID after ${env}= in .env, then restart the app.`
+        : "Lumen isn't set up yet. Paste the key, secret and instance IDs from the host into .env (MODULE §7), then restart the app.");
+    }
+    const r = await api("/api/ask", { subject, question, brain });
     entry.lastChild.remove();
     if (r.refused) {
       entry.append(el("div", { class: "mark", text: "✗", "aria-hidden": "true" }), el("div", { class: "refuse", text: r.reply.replace(/^⚠️\s*/, "") }));
@@ -410,6 +429,9 @@ $("ask-form").addEventListener("submit", (e) => { e.preventDefault(); ask(); });
 $("mode-ask").addEventListener("click", () => setMode("ask"));
 $("mode-quiz").addEventListener("click", () => setMode("quiz"));
 $("quiz-start").addEventListener("click", startQuiz);
+for (const b of document.querySelectorAll("#brain button")) {
+  b.addEventListener("click", () => { brain = b.dataset.brain; render(); $("question").focus(); });
+}
 $("theme").addEventListener("click", () => {
   const dark = document.documentElement.dataset.theme
     ? document.documentElement.dataset.theme === "dark"
@@ -417,7 +439,7 @@ $("theme").addEventListener("click", () => {
   document.documentElement.dataset.theme = dark ? "light" : "dark";
 });
 
-api("/api/state").then((s) => { state = s; pick(s.subjects[0].name); $("question").focus(); })
+api("/api/state").then((s) => { state = s; brain = s.backend === "lumen" ? "lumen" : "claude"; pick(s.subjects[0].name); $("question").focus(); })
   .catch((e) => { $("who").textContent = e.message; });
 </script>
 </body>

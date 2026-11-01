@@ -30,7 +30,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 from backends.base import ReviewerError
-from config import MODEL, NOTES_BACKEND, QUIZ_LOG, SUBJECTS, subject_dir
+from config import LUMEN_INSTANCES, MODEL, NOTES_BACKEND, QUIZ_LOG, SUBJECTS, subject_dir
 from helpers import NOTE_TYPES, load_step
 from reviewer import ask_once, make_backend
 
@@ -38,7 +38,7 @@ ROOT = Path(__file__).resolve().parent
 UI = ROOT / "ui" / "index.html"
 PORT = int(os.getenv("REVIEWER_PORT", "8766"))
 ASK_LOCK = threading.Lock()      # one question at a time keeps the cache numbers easy to read
-BACKENDS: dict[str, object] = {}  # one backend per subject, reused (a Lumen session stays open)
+BACKENDS: dict[tuple, object] = {}  # one backend per (subject, brain), reused (a Lumen session stays open)
 QUIZZES: dict[str, dict] = {}     # quiz id -> the Quiz and your answers so far (never sent whole)
 SEEN: dict[str, float] = {}        # workshop file -> when it last changed
 
@@ -67,6 +67,9 @@ def state() -> dict:
     return {
         "model": MODEL,
         "backend": NOTES_BACKEND,
+        # Which subjects have a Lumen AI Chat instance in .env (the Lumen switch needs one).
+        "lumen": {s: bool(LUMEN_INSTANCES.get(s)) for s in SUBJECTS}
+        if os.getenv("LUMEN_API_KEY") and os.getenv("LUMEN_API_SECRET") else {},
         "subjects": [{"name": s, "notes": notes_in(s)} for s in SUBJECTS],
         "history": quiz_history(),
     }
@@ -98,10 +101,10 @@ def friendly(e: Exception) -> str:
     return f"{type(e).__name__}: {e}"
 
 
-def backend_for(subject: str):
-    if subject not in BACKENDS:
-        BACKENDS[subject] = make_backend(subject)
-    return BACKENDS[subject]
+def backend_for(subject: str, brain: str):
+    if (subject, brain) not in BACKENDS:
+        BACKENDS[(subject, brain)] = make_backend(subject, brain)
+    return BACKENDS[(subject, brain)]
 
 
 # --------------------------------------------------------------------------- the web server
@@ -169,11 +172,15 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json({"error": "Pick a subject first."}, 400)
         if not question:
             return self.send_json({"error": "Type a question first."}, 400)
+        brain = req.get("brain") or NOTES_BACKEND
+        if brain not in ("claude", "lumen"):
+            return self.send_json({"error": "The brain must be claude or lumen."}, 400)
         hint = todo_hint()
-        if hint:
+        if hint and brain == "claude":
             return self.send_json({"error": hint}, 400)
         with ASK_LOCK:
-            reply, answer = ask_once(backend_for(subject), subject, question)
+            backend = backend_for(subject, brain)
+            reply, answer = ask_once(backend, subject, question)
         refused = answer is None or reply.startswith("⚠️")
         self.send_json({
             "refused": refused,
@@ -184,7 +191,7 @@ class Handler(BaseHTTPRequestHandler):
             "degraded": [] if answer is None else answer.degraded,
             "cache_read": getattr(answer, "cache_read", 0),
             "cache_write": getattr(answer, "cache_write", 0),
-            "brain": "Lumen AI Chat" if type(backend_for(subject)).__name__ == "LumenNotes" else "Claude",
+            "brain": "Lumen AI Chat" if type(backend).__name__ == "LumenNotes" else "Claude",
         })
 
     def quiz_start(self, req: dict):

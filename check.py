@@ -5,7 +5,8 @@
     python check.py 2            # Phase 2: same
     python check.py 3            # Phase 3: offline checks, then all 10 cases in cases.json
     python check.py 3 --offline  # skip the live part (no Claude calls, no cost)
-    python check.py 3 --backend lumen   # host only: cases 1-3, 6, 7, 10 on Lumen AI Chat (~36 credits)
+    python check.py lumen        # MODULE §7: your Lumen settings, then 2 Bio questions on Lumen (~14 credits)
+    python check.py 3 --backend lumen   # host: cases 1-3, 6, 7, 10 on Lumen AI Chat (~36 credits)
 
 Each line says PASS, FAIL (with the one thing to fix) or TODO (not written yet).
 Live quiz checks write to a scratch log, so your own quiz_log.csv is never touched.
@@ -451,6 +452,75 @@ def all_cases_pass():
     assert passed == len(cases), f"{len(cases) - passed} case(s) failed; see the FAIL lines above"
 
 
+# ---------------------------------------------------------------- MODULE §7: the Lumen brain
+
+def lumen_settings():
+    """Offline: are the Lumen key, secret and Bio instance in .env? (No credits.)"""
+    from config import LUMEN_BASE_URL, LUMEN_INSTANCES
+    key, secret = os.getenv("LUMEN_API_KEY", ""), os.getenv("LUMEN_API_SECRET", "")
+    if not key or not secret:
+        todo("paste the Lumen key and secret from the host after LUMEN_API_KEY= and LUMEN_API_SECRET= in .env")
+    assert key != secret, "LUMEN_API_KEY and LUMEN_API_SECRET are the same; copy each one again"
+    assert "staging" in LUMEN_BASE_URL or "test" in LUMEN_BASE_URL, \
+        "AI Chat is only on the staging and test gateways; use the LUMEN_BASE_URL from .env.example"
+    if not LUMEN_INSTANCES.get("bio"):
+        todo("paste the Bio instance ID from the host after LUMEN_INSTANCE_BIO= in .env")
+    missing = [s for s, i in LUMEN_INSTANCES.items() if not i]
+    print("      key, secret and Bio instance set" + (f"; not set yet: {', '.join(missing)}" if missing else ""))
+
+
+def lumen_instance_found():
+    """Live, 1 credit: the key works and can see the Bio instance."""
+    from backends.lumen_notes import list_instances
+    from config import LUMEN_INSTANCES
+    found = list_instances()
+    for i in found:
+        print(f"      {i.get('InstanceID')}  {i.get('Name')}  [{i.get('Status')}]")
+    assert found, "this key sees no AI Chat instances; ask the host to check the key's organization"
+    ids = {i.get("InstanceID") for i in found}
+    assert LUMEN_INSTANCES["bio"] in ids, "LUMEN_INSTANCE_BIO isn't in that list; copy the Bio instance ID again"
+
+
+def lumen_answers_from_notes():
+    """Live, about 13 credits: case 1 answers with a source, case 2 is refused, Lumen kept the transcript."""
+    from backends.lumen_notes import LumenNotes
+    from reviewer import ask_once
+    backend = LumenNotes("bio")
+    first, a = ask_once(backend, "bio", "Ano ang ATP?")
+    second, _ = ask_once(backend, "bio", "Sino si Rizal?")
+    for reply in (first, second):
+        for line in reply.splitlines()[:4]:
+            print(f"      {line[:100]}")
+    stored = backend.transcript()
+    print(f"      Lumen stored {len(stored)} messages in this session")
+    assert a is not None and a.sources and not first.startswith("⚠️"), \
+        "Lumen answered without citing a source, so the guard refused. Ask the host to check the Bio instance's sources"
+    assert second.startswith("⚠️ Not in your bio notes"), \
+        "Lumen answered a question the notes don't cover. Ask the host to paste ASK_RULES into the instance settings"
+
+
+def lumen_main(no_live: bool) -> int:
+    print("\nPhase 0 (setup)")
+    setup = [run(fn.__name__.replace("_", " "), fn) for p, fn in OFFLINE if p == 0]
+    print("\nLumen brain (MODULE §7)")
+    results = [run("lumen settings", lumen_settings)]
+    if not no_live and all(r == "pass" for r in setup + results):
+        for fn in (lumen_instance_found, lumen_answers_from_notes):
+            print(f"  ...   {fn.__name__.replace('_', ' ')} (live)")
+            results.append(run(fn.__name__.replace("_", " "), fn))
+            if results[-1] != "pass":
+                break
+    elif not no_live:
+        print("  skip  live check: fix the lines above first")
+    print()
+    if any(r != "pass" for r in setup + results):
+        print("❌ not yet: fix the first TODO or FAIL line above, then python check.py lumen")
+        return 1
+    print("✅ Lumen answers from your notes · same CLI, same guard, different brain" if not no_live
+          else "✅ Lumen settings ok · drop --offline to ask Lumen (about 14 credits)")
+    return 0
+
+
 # ---------------------------------------------------------------- runner
 
 NEXT = {
@@ -489,6 +559,8 @@ def run(name: str, fn) -> str:
 def main(argv: list[str]) -> int:
     global BACKEND
     no_live = "--offline" in argv
+    if "lumen" in argv:
+        return lumen_main(no_live)
     if "--backend" in argv:
         i = argv.index("--backend")
         BACKEND = argv[i + 1] if i + 1 < len(argv) else "claude"
@@ -523,7 +595,7 @@ def main(argv: list[str]) -> int:
     elif no_live:
         print("✅ phase 3 offline checks pass · drop --offline to run the 10 cases")
     else:
-        print("✅ phase 3 of 3 passes · 10 of 10 cases · done!" if BACKEND == "claude" else
+        print("✅ phase 3 of 3 passes · 10 of 10 cases · next: the Lumen brain · python check.py lumen" if BACKEND == "claude" else
               "✅ the Lumen cases pass · same CLI, same guard, different brain")
     return 0 if first_open is None else 1
 
