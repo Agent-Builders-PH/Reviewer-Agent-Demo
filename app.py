@@ -171,7 +171,7 @@ class Handler(BaseHTTPRequestHandler):
             "refused": refused,
             "reply": reply,
             "text": "" if refused else answer.text.strip(),
-            "sources": [] if refused else [s.title for s in answer.sources],
+            "sources": [] if refused else [{"title": s.title, "page": s.page} for s in answer.sources],
             "degraded": [] if answer is None else answer.degraded,
         })
 

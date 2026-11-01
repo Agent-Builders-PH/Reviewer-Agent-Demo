@@ -195,7 +195,7 @@ span.chip { cursor: default; }
       <div class="card">
         <h2>Your notes</h2>
         <ul id="notes"></ul>
-        <p>The host gave these files to this subject's Lumen instance. Open one to check an answer.</p>
+        <p>Each question carries the parts of these notes that match it. Open one to check an answer.</p>
       </div>
       <div class="card">
         <h2>Quiz history</h2>
@@ -234,14 +234,19 @@ async function api(path, body) {
   return data;
 }
 
-// A Lumen citation is a source name. If it names one of the local notes, link to that file.
-function sourceChip(subj, title) {
+// A source is a note (and page). Link to that file, opened at the page.
+// It comes as {title, page} from an answer, or as "bio-week5.pdf p.1" from a quiz.
+function sourceChip(subj, src) {
+  let title = typeof src === "string" ? src : src.title;
+  let page = typeof src === "string" ? null : src.page;
+  if (!page) { const m = title.match(/p(?:age|\.)\s*(\d+)/i); if (m) page = Number(m[1]); }
   const notes = state.subjects.find((s) => s.name === subj).notes;
   const t = title.toLowerCase();
   const note = notes.find((n) => t.includes(n.name.toLowerCase()) || n.name.toLowerCase().includes(t));
-  if (!note) return el("span", { class: "chip", text: title });
-  return el("a", { class: "chip", href: `/note/${encodeURIComponent(subj)}/${encodeURIComponent(note.name)}`,
-    target: "_blank", rel: "noopener", text: title });
+  const text = typeof src === "string" || !page ? title : `${title} · p.${page}`;
+  if (!note) return el("span", { class: "chip", text });
+  const href = `/note/${encodeURIComponent(subj)}/${encodeURIComponent(note.name)}` + (page && note.kind === "PDF" ? `#page=${page}` : "");
+  return el("a", { class: "chip", href, target: "_blank", rel: "noopener", text });
 }
 
 function addEntry(node) {

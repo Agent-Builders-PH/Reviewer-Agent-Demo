@@ -18,7 +18,8 @@ import httpx
 
 @dataclass
 class Source:
-    title: str                 # Lumen's citation string, e.g. the note's name
+    title: str                 # the note's file name (or Lumen's citation string)
+    page: int | None = None    # the PDF page, when there is one
 
 
 @dataclass

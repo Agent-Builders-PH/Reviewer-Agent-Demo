@@ -12,6 +12,10 @@ sources (the files in notes/). You talk to it with four HTTP calls:
     POST /ai_chat/instances/{id}/sessions/{sid}/messages      ask a question   5 credits
     GET  /ai_chat/instances/{id}/sessions/{sid}/messages      the transcript   1 credit
 
+Your notes travel with every question: notes.py picks the parts of your notes
+that match it, labels each with its file and page, and adds the rules. Lumen
+answers from them and ends with "Source: <file>, p.<page>".
+
 You write the calls (TODOs 1 to 3) and the guard (TODO 4): no source, no answer.
 """
 from __future__ import annotations
@@ -24,6 +28,7 @@ import httpx
 
 from config import AI_CHAT, LUMEN_API_KEY, LUMEN_API_SECRET, MAX_QUESTION, instance_for
 from helpers import LumenError, NotesAnswer, Source, expect
+from notes import ask_message, named_sources
 
 
 # ---------------------------------------------------------------- TODO 1
@@ -77,7 +82,7 @@ def answer_or_refuse(a: NotesAnswer, subject: str) -> str:
 
     # Given: print the answer, then one 📎 line per source.
     lines = [f"📘 {a.text.strip()}"]
-    lines += [f"📎 {s.title}" for s in a.sources]
+    lines += [f"📎 {s.title}" + (f" · p.{s.page}" if s.page else "") for s in a.sources]
     if a.degraded:
         lines.append("⚠️ Some sources were offline: " + ", ".join(a.degraded))
     return "\n".join(lines)
@@ -93,6 +98,7 @@ class LumenNotes:
 
     The session opens on the first question (so building this costs nothing)
     and is reused after that, so Lumen keeps the whole conversation.
+    ask() sends a question with the matching notes; send() sends any message.
     """
 
     def __init__(self, subject: str, http: httpx.Client | None = None, pause: float = 3.0):
@@ -108,9 +114,20 @@ class LumenNotes:
             self.session_id = open_session(self.http, self.instance, f"Reviewer Agent - {self.subject} - {date.today()}")
         return send_message(self.http, self.instance, self.session_id, message)
 
-    def ask(self, message: str) -> NotesAnswer:
-        if len(message) > MAX_QUESTION:  # Lumen would answer 400; refuse before paying for anything
+    def ask(self, question: str) -> NotesAnswer:
+        """One question, sent with the parts of your notes that match it (5 credits)."""
+        if len(question) > MAX_QUESTION:  # no room left for your notes; refuse before paying for anything
             return NotesAnswer(text=f"Question too long. Keep it under {MAX_QUESTION:,} characters.")
+        message, parts = ask_message(self.subject, question)
+        if not parts:  # nothing in your notes matches: no call, no credits
+            return NotesAnswer(text="Not in your notes.")
+        a = self.send(message)
+        text, named = named_sources(a.text, parts)  # only sources this message really sent
+        return NotesAnswer(text=text, sources=a.sources + [Source(p.file, p.page) for p in named],
+                           degraded=a.degraded)
+
+    def send(self, message: str) -> NotesAnswer:
+        """Send one message as it is, with one retry when that helps (5 credits)."""
         try:
             return self._send(message)
         except LumenError as e:

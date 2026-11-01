@@ -12,7 +12,7 @@
 
 # Reviewer Agent: starter template
 
-**Agent Builders PH · Episode 3.** Build a study reviewer that answers only from your notes, names its sources, and quizzes you. It runs on **Lumen AI Chat**: one assistant per subject holds the notes and the rules, and your Python code does the rest.
+**Agent Builders PH · Episode 3.** Build a study reviewer that answers only from your notes, names its sources, and quizzes you. It runs on **Lumen AI Chat**: your Python code sends each question with the matching parts of your notes, and checks every answer that comes back.
 
 You'll write the Lumen AI Chat client **yourself**, in plain Python: open a session, send a question, and refuse any answer that cites nothing. Then Lumen writes a quiz, and Python checks it and grades it, so nothing depends on the model getting the format right.
 

@@ -118,12 +118,16 @@ SAMPLE_QUIZ = {"questions": [
 class ScriptedNotes:
     """Stands in for LumenNotes in the quiz checks: returns the next reply text, records each prompt."""
 
+    subject = "bio"
+
     def __init__(self, *replies):
         self.replies, self.prompts = list(replies), []
 
-    def ask(self, prompt):
+    def send(self, prompt):
         self.prompts.append(prompt)
         return fake_answer(text=self.replies.pop(0))
+
+    ask = send
 
 
 class Exploding:
@@ -290,7 +294,7 @@ def two_questions_on_lumen():
     for reply in (first, second):
         for line in reply.splitlines()[:3]:
             print(f"      {line[:100]}")
-    print("      (about 12 credits: 1 session, 2 questions)")
+    print("      (about 7 credits: 1 session, 1 question; no Bio notes match Rizal, so that one cost nothing)")
     assert a is not None and a.sources and not first.startswith("⚠️"), \
         "Lumen sent no citations, so your guard refused. Tell the host: the Bio instance may have no sources"
     assert second.startswith("⚠️ Not in your bio notes"), \
@@ -405,19 +409,48 @@ def session_reopens_and_retries():
         # a timeout (504, not charged) is retried once, in the same session
         lumen = FakeLumen((201, {"Session": {"id": "s1"}}), (504, {"error": {"code": "AI_CHAT_REPLY_TIMEOUT"}}), (200, ANSWER))
         notes = s.LumenNotes("bio", http=lumen.client(), pause=0)
-        notes.ask("Ano?")
+        notes.send("hello")
         assert len(lumen.calls) == 3
-        # the next question reuses the session: no new session, 1 call
+        # the next message reuses the session: no new session, 1 call
         lumen.script.append((200, ANSWER))
-        notes.ask("Isa pa?")
+        notes.send("hello again")
         assert len(lumen.calls) == 4 and lumen.calls[-1].path.endswith("/sessions/s1/messages"), "reuse the open session"
         # out of credits is not retried, and says so plainly
         lumen = FakeLumen((201, {"Session": {"id": "s1"}}), (403, {"error": {"code": "API_CREDITS_INSUFFICIENT"}}))
         try:
-            s.LumenNotes("bio", http=lumen.client(), pause=0).ask("Ano?")
+            s.LumenNotes("bio", http=lumen.client(), pause=0).send("hello")
             raise AssertionError("out of credits should raise")
         except ReviewerError as e:
             assert "credits" in str(e) and len(lumen.calls) == 2
+
+
+@offline(3)
+def notes_travel_with_the_question():
+    """Python picks the matching notes, keeps the message under 2,000 characters, and checks the sources."""
+    import notes as notes_py
+    s = step("01_ask")
+
+    def reply(text):
+        return (200, {"Answer": {"sessionID": "s1", "answer": text, "citations": [], "degradedSources": []}})
+
+    with fake_env(), patched_ask(), mock.patch.object(s, "instance_for", lambda subject: "inst-bio"):
+        lumen = FakeLumen((201, {"Session": {"id": "s1"}}),
+                          reply("ATP is the cell's energy currency.\nSource: bio-week5.pdf, p.1"),
+                          reply("ATP powers everything. Source: made-up-notes.pdf, p.9"))
+        n = s.LumenNotes("bio", http=lumen.client(), pause=0)
+        a = n.ask("Ano ang ATP?")
+        sent = lumen.calls[-1].json["message"]
+        assert "[bio-week5.pdf p.1]" in sent and sent.rstrip().endswith("Question: Ano ang ATP?"), \
+            "the message should carry the labeled notes, the rules, then the question"
+        assert len(sent) <= notes_py.MAX_MESSAGE, f"the message is {len(sent)} characters; Lumen's limit is 2,000"
+        assert [(x.title, x.page) for x in a.sources] == [("bio-week5.pdf", 1)] and "Source" not in a.text, \
+            "the Source line should become a source, and leave the answer text"
+        b = n.ask("Ano ang ATP? Paki-explain.")
+        assert not b.sources, "a source that names notes we never sent must not count"
+        calls = len(lumen.calls)
+        c = n.ask("Sino si Rizal?")
+        assert len(lumen.calls) == calls and c.text == "Not in your notes.", \
+            "nothing in the Bio notes matches Rizal: refuse without calling Lumen"
 
 
 def run_case(case: dict, sessions: dict, log: Path):

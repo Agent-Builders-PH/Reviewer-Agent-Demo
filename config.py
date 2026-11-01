@@ -13,13 +13,14 @@ for stream in (sys.stdout, sys.stderr):
     if hasattr(stream, "reconfigure"):
         stream.reconfigure(encoding="utf-8", errors="replace")
 
-NOTES_DIR = ROOT / "notes"           # the same files the host gave each Lumen instance
+NOTES_DIR = ROOT / "notes"           # your notes, one folder per subject; sent with each question
 SUBJECTS = ["bio", "econ", "ph-history"]
 QUIZ_LOG = ROOT / "quiz_log.csv"
 
-# Lumen AI Chat rejects messages over 4,000 characters. We refuse them before
-# any API call, so a long paste never costs anything.
-MAX_QUESTION = 4000
+# A Lumen AI Chat message is at most 2,000 characters, and your notes travel in
+# the same message as the question. So questions are capped at 500 characters,
+# and refused before any API call: a long paste never costs anything.
+MAX_QUESTION = 500
 
 # Lumen AI Chat. The host sends you the key, the secret and one instance ID per subject.
 LUMEN_BASE_URL = os.getenv("LUMEN_BASE_URL", "https://api.staging.nonlive.lumen.bayanichain.tech").rstrip("/")
