@@ -1,14 +1,11 @@
-"""The Reviewer Agent CLI: ask | quiz | chat.
+"""The Reviewer Agent CLI: ask | quiz | chat | instances.
 
     python reviewer.py ask "Ano ang ATP?" --subject bio
     python reviewer.py quiz bio
-    python reviewer.py chat --subject bio          # type a question, or "quiz me"
-    python reviewer.py instances                   # host only: list Lumen AI Chat instances
+    python reviewer.py chat --subject bio          # type a question, "quiz me" or "transcript"
+    python reviewer.py instances                   # the Lumen AI Chat instances your key can use (1 credit)
 
-NOTES_BACKEND in .env picks who answers Ask questions: claude (default) or
-lumen. --backend lumen does the same for one run. Quiz always runs on Claude
-with the local notes, because Lumen replies in free text, not a Quiz form.
-
+Every answer and every quiz comes from the subject's Lumen AI Chat instance.
 The router is plain Python: a message starting with "quiz me" runs the quiz,
 anything else is a question. Beginners can read it, and it never misroutes.
 """
@@ -16,39 +13,39 @@ from __future__ import annotations
 
 import sys
 
-from backends.base import NotesAnswer, NotesBackend, ReviewerError
-from config import MAX_QUESTION, NOTES_BACKEND, SUBJECTS
-from helpers import load_step
+import httpx
+
+from config import MAX_QUESTION, SUBJECTS
+from helpers import NotesAnswer, ReviewerError, load_step
 
 
-def make_backend(subject: str, backend: str | None = None) -> NotesBackend:
-    """claude -> ClaudeNotes (your Agno agent); lumen -> LumenNotes (Lumen AI Chat)."""
-    name = (backend or NOTES_BACKEND).lower()
-    if name == "claude":
-        from backends.claude_notes import ClaudeNotes
-        return ClaudeNotes(subject)
-    if name == "lumen":
-        from backends.lumen_notes import LumenNotes
-        return LumenNotes(subject)
-    raise ReviewerError(f"NOTES_BACKEND must be claude or lumen, not {name!r}.")
+def make_notes(subject: str):
+    return load_step("01_ask").LumenNotes(subject)
 
 
-def ask_once(backend: NotesBackend, subject: str, question: str) -> tuple[str, NotesAnswer | None]:
+def ask_once(notes, subject: str, question: str) -> tuple[str, NotesAnswer | None]:
     """One question through the guard. Returns what to print, and the raw answer (None if refused early)."""
     question = question.strip()
     if not question:
         return "Type a question first.", None
-    if len(question) > MAX_QUESTION:  # refused here, before any API call, on both backends
+    if len(question) > MAX_QUESTION:  # refused here, before any API call
         return f"⚠️ Question too long ({len(question):,} characters). Keep it under {MAX_QUESTION:,}.", None
-    answer = backend.ask(question)
+    answer = notes.ask(question)
     return load_step("01_ask").answer_or_refuse(answer, subject), answer
 
 
-def chat(subject: str, backend_name: str | None = None) -> int:
-    backend = make_backend(subject, backend_name)
-    brain = "Lumen AI Chat" if type(backend).__name__ == "LumenNotes" else "Claude"
-    print(f"Reviewer Agent · {subject} notes · Ask: {brain} · Quiz: Claude")
-    print('Type a question, "quiz me", or "exit".' + (' "transcript" shows what Lumen stored.' if brain != "Claude" else ""))
+def show_transcript(notes) -> None:
+    messages = notes.transcript()
+    if not messages:
+        print("Nothing yet: ask a question first.")
+    for m in messages:
+        print(f"  {m.get('role', '?'):>9}: {' '.join(str(m.get('content', '')).split())[:100]}")
+
+
+def chat(subject: str) -> int:
+    notes = make_notes(subject)
+    print(f"Reviewer Agent · {subject} notes · Lumen AI Chat")
+    print('Type a question, "quiz me", "transcript" (what Lumen stored), or "exit".')
     while True:
         try:
             message = input(f"\n{subject}> ").strip()
@@ -59,14 +56,15 @@ def chat(subject: str, backend_name: str | None = None) -> int:
             return 0
         try:
             if message.lower().startswith("quiz me"):
-                load_step("02_quiz").run_quiz(subject)
-            elif message.lower() == "transcript" and hasattr(backend, "transcript"):
-                for m in backend.transcript():
-                    print(f"  {m.get('role', '?'):>9}: {' '.join(str(m.get('content', '')).split())[:100]}")
+                load_step("02_quiz").run_quiz(subject, notes)
+            elif message.lower() == "transcript":
+                show_transcript(notes)
             else:
-                print(ask_once(backend, subject, message)[0])
+                print(ask_once(notes, subject, message)[0])
         except (ReviewerError, NotImplementedError) as e:
             print(f"❌ {e}")
+        except httpx.HTTPError as e:
+            print(f"❌ Can't reach Lumen ({type(e).__name__}). Check your internet connection.")
 
 
 def pop_option(argv: list[str], name: str, default: str | None = None) -> str | None:
@@ -81,19 +79,19 @@ def pop_option(argv: list[str], name: str, default: str | None = None) -> str | 
 def main(argv: list[str]) -> int:
     argv = list(argv)
     subject = pop_option(argv, "--subject", "bio")
-    backend = pop_option(argv, "--backend")
     command = argv.pop(0) if argv else ""
     try:
         if command == "ask" and argv:
-            print(ask_once(make_backend(subject, backend), subject, " ".join(argv))[0])
+            print(ask_once(make_notes(subject), subject, " ".join(argv))[0])
         elif command == "quiz":
-            load_step("02_quiz").run_quiz(argv[0] if argv else subject)
+            quiz_subject = argv[0] if argv else subject
+            load_step("02_quiz").run_quiz(quiz_subject)
         elif command == "chat":
-            return chat(subject, backend)
+            return chat(subject)
         elif command == "instances":
-            from backends.lumen_notes import list_instances
-            found = list_instances()
-            print("No AI Chat instances yet. Create one in the Lumen Organization Portal." if not found else "")
+            found = load_step("01_ask").list_instances(httpx.Client(timeout=35))
+            if not found:
+                print("No AI Chat instances yet. The host creates them in the Lumen Organization Portal.")
             for i in found:
                 print(f"{i.get('InstanceID')}  {i.get('Name')}  [{i.get('Status')}]  {i.get('Description') or ''}")
         else:
@@ -102,6 +100,9 @@ def main(argv: list[str]) -> int:
             return 2
     except (ReviewerError, NotImplementedError) as e:
         print(f"❌ {e}")
+        return 1
+    except httpx.HTTPError as e:
+        print(f"❌ Can't reach Lumen ({type(e).__name__}). Check your internet connection and LUMEN_BASE_URL.")
         return 1
     except (EOFError, KeyboardInterrupt):
         print("\nStopped.")

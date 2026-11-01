@@ -3,9 +3,10 @@
     python app.py            # then open http://127.0.0.1:8766
 
 A small local web page on top of the same code as reviewer.py: pick a
-subject, ask your notes a question (each source opens the PDF at the cited
-page), or take a quiz. In the template it shows which TODO to finish next, and it picks up
-your edits to 01_ask.py and 02_quiz.py as soon as you save them.
+subject, ask a question (Lumen AI Chat answers from that subject's notes),
+take a quiz, or read what Lumen stored in the transcript. In the template it
+shows which TODO to finish next, and it picks up your edits to 01_ask.py and
+02_quiz.py as soon as you save them.
 
 The quiz answers stay in Python: the page gets each right answer only after
 you pick a letter, the same as in the terminal.
@@ -29,30 +30,27 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
-from backends.base import ReviewerError
-from config import LUMEN_INSTANCES, MODEL, NOTES_BACKEND, QUIZ_LOG, SUBJECTS, subject_dir
-from helpers import NOTE_TYPES, load_step
-from reviewer import ask_once, make_backend
+import httpx
+
+from config import QUIZ_LOG, SUBJECTS, subject_dir
+from helpers import ReviewerError, load_step
+from reviewer import ask_once, make_notes
 
 ROOT = Path(__file__).resolve().parent
 UI = ROOT / "ui" / "index.html"
 PORT = int(os.getenv("REVIEWER_PORT", "8766"))
-ASK_LOCK = threading.Lock()      # one question at a time keeps the cache numbers easy to read
-BACKENDS: dict[tuple, object] = {}  # one backend per (subject, brain), reused (a Lumen session stays open)
-QUIZZES: dict[str, dict] = {}     # quiz id -> the Quiz and your answers so far (never sent whole)
+NOTE_TYPES = {".pdf", ".md", ".txt"}
+LOCK = threading.Lock()            # one Lumen call at a time
+SESSIONS: dict[str, object] = {}   # one Lumen conversation per subject, reused
+QUIZZES: dict[str, dict] = {}      # quiz id -> the Quiz and your answers so far (never sent whole)
 SEEN: dict[str, float] = {}        # workshop file -> when it last changed
 
 
 # --------------------------------------------------------------------------- what the page shows
 
 def notes_in(subject: str) -> list[dict]:
-    from pypdf import PdfReader
-    out = []
-    for p in sorted(subject_dir(subject).iterdir()):
-        if p.suffix.lower() in NOTE_TYPES:
-            pages = len(PdfReader(p).pages) if p.suffix.lower() == ".pdf" else None
-            out.append({"name": p.name, "pages": pages})
-    return out
+    return [{"name": p.name, "kind": "PDF" if p.suffix.lower() == ".pdf" else "text"}
+            for p in sorted(subject_dir(subject).iterdir()) if p.suffix.lower() in NOTE_TYPES]
 
 
 def quiz_history() -> list[dict]:
@@ -64,15 +62,7 @@ def quiz_history() -> list[dict]:
 
 
 def state() -> dict:
-    return {
-        "model": MODEL,
-        "backend": NOTES_BACKEND,
-        # Which subjects have a Lumen AI Chat instance in .env (the Lumen switch needs one).
-        "lumen": {s: bool(LUMEN_INSTANCES.get(s)) for s in SUBJECTS}
-        if os.getenv("LUMEN_API_KEY") and os.getenv("LUMEN_API_SECRET") else {},
-        "subjects": [{"name": s, "notes": notes_in(s)} for s in SUBJECTS],
-        "history": quiz_history(),
-    }
+    return {"subjects": [{"name": s, "notes": notes_in(s)} for s in SUBJECTS], "history": quiz_history()}
 
 
 def reload_if_edited() -> None:
@@ -82,29 +72,22 @@ def reload_if_edited() -> None:
         if SEEN.setdefault(name, changed) != changed:
             SEEN[name] = changed
             importlib.reload(load_step(name))
-            BACKENDS.clear()  # rebuild the Ask agent from the new code
+            SESSIONS.clear()  # rebuild the conversations from the new code
             print(f"Reloaded {name}.py")
-
-
-def todo_hint() -> str:
-    """Point template users at the Phase 1 TODO to finish first."""
-    if "TODO 1" in load_step("01_ask").ASK_RULES:
-        return "TODO 1 first: write the four ASK_RULES lines in 01_ask.py, save, then ask again."
-    return ""
 
 
 def friendly(e: Exception) -> str:
     if isinstance(e, (ReviewerError, NotImplementedError)):
         return str(e)
-    if type(e).__name__ == "AuthenticationError":
-        return "Anthropic rejected the key in .env (401). Paste a working key into .env and restart the app."
+    if isinstance(e, httpx.HTTPError):
+        return f"Can't reach Lumen ({type(e).__name__}). Check your internet connection and LUMEN_BASE_URL."
     return f"{type(e).__name__}: {e}"
 
 
-def backend_for(subject: str, brain: str):
-    if (subject, brain) not in BACKENDS:
-        BACKENDS[(subject, brain)] = make_backend(subject, brain)
-    return BACKENDS[(subject, brain)]
+def notes_for(subject: str):
+    if subject not in SESSIONS:
+        SESSIONS[subject] = make_notes(subject)
+    return SESSIONS[subject]
 
 
 # --------------------------------------------------------------------------- the web server
@@ -139,7 +122,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 traceback.print_exc()
                 return self.send_json({"error": friendly(e)}, 500)
-        if path.startswith("/note/"):  # /note/<subject>/<file>: the browser opens a PDF at #page=N
+        if path.startswith("/note/"):  # /note/<subject>/<file>: open the note the host gave Lumen
             parts = path.split("/")
             if len(parts) == 4 and parts[2] in SUBJECTS:
                 file = subject_dir(parts[2]) / Path(parts[3]).name
@@ -154,7 +137,8 @@ class Handler(BaseHTTPRequestHandler):
 
     # POST --------------------------------------------------------------
     def do_POST(self):
-        routes = {"/api/ask": self.ask, "/api/quiz/start": self.quiz_start, "/api/quiz/answer": self.quiz_answer}
+        routes = {"/api/ask": self.ask, "/api/transcript": self.transcript,
+                  "/api/quiz/start": self.quiz_start, "/api/quiz/answer": self.quiz_answer}
         route = routes.get(urlparse(self.path).path)
         if route is None:
             return self.send_json({"error": "not found"}, 404)
@@ -162,45 +146,51 @@ class Handler(BaseHTTPRequestHandler):
             reload_if_edited()
             route(self.body_json())
         except Exception as e:  # show the problem on the page, and the details in the terminal
-            if not isinstance(e, (ReviewerError, NotImplementedError)):
+            if not isinstance(e, (ReviewerError, NotImplementedError, httpx.HTTPError)):
                 traceback.print_exc()
             self.send_json({"error": friendly(e)}, 500)
 
-    def ask(self, req: dict):
-        subject, question = req.get("subject", ""), (req.get("question") or "").strip()
+    def subject_of(self, req: dict) -> str | None:
+        subject = req.get("subject", "")
         if subject not in SUBJECTS:
-            return self.send_json({"error": "Pick a subject first."}, 400)
+            self.send_json({"error": "Pick a subject first."}, 400)
+            return None
+        return subject
+
+    def ask(self, req: dict):
+        subject = self.subject_of(req)
+        question = (req.get("question") or "").strip()
+        if subject is None:
+            return
         if not question:
             return self.send_json({"error": "Type a question first."}, 400)
-        brain = req.get("brain") or NOTES_BACKEND
-        if brain not in ("claude", "lumen"):
-            return self.send_json({"error": "The brain must be claude or lumen."}, 400)
-        hint = todo_hint()
-        if hint and brain == "claude":
-            return self.send_json({"error": hint}, 400)
-        with ASK_LOCK:
-            backend = backend_for(subject, brain)
-            reply, answer = ask_once(backend, subject, question)
+        with LOCK:
+            reply, answer = ask_once(notes_for(subject), subject, question)
         refused = answer is None or reply.startswith("⚠️")
         self.send_json({
             "refused": refused,
             "reply": reply,
             "text": "" if refused else answer.text.strip(),
-            "sources": [] if refused else [{"title": s.title, "page": s.page, "quote": " ".join(s.quote.split())}
-                                           for s in answer.sources],
+            "sources": [] if refused else [s.title for s in answer.sources],
             "degraded": [] if answer is None else answer.degraded,
-            "cache_read": getattr(answer, "cache_read", 0),
-            "cache_write": getattr(answer, "cache_write", 0),
-            "brain": "Lumen AI Chat" if type(backend).__name__ == "LumenNotes" else "Claude",
         })
 
+    def transcript(self, req: dict):
+        subject = self.subject_of(req)
+        if subject is None:
+            return
+        with LOCK:
+            messages = notes_for(subject).transcript()
+        self.send_json({"messages": [{"role": m.get("role", "?"), "content": str(m.get("content", ""))} for m in messages]})
+
     def quiz_start(self, req: dict):
-        subject = req.get("subject", "")
-        if subject not in SUBJECTS:
-            return self.send_json({"error": "Pick a subject first."}, 400)
+        subject = self.subject_of(req)
+        if subject is None:
+            return
         step = load_step("02_quiz")
         focus = step.last_missed(subject)
-        quiz = step.write_quiz(subject, focus)
+        with LOCK:
+            quiz = step.write_quiz(notes_for(subject), focus)
         quiz_id = uuid.uuid4().hex
         QUIZZES[quiz_id] = {"subject": subject, "quiz": quiz, "answers": {}, "missed": []}
         self.send_json({
@@ -232,7 +222,7 @@ class Handler(BaseHTTPRequestHandler):
             load_step("02_quiz").log_result(entry["subject"], score, len(questions), entry["missed"])
             QUIZZES.pop(req["id"], None)
         self.send_json({"correct": correct, "answer": q.answer, "answer_text": getattr(q, q.answer),
-                        "why": q.why, "page": q.page, "done": done, "score": score, "total": len(questions)})
+                        "why": q.why, "source": q.source, "done": done, "score": score, "total": len(questions)})
 
 
 def main() -> None:
@@ -241,8 +231,7 @@ def main() -> None:
         SEEN[name] = (ROOT / f"{name}.py").stat().st_mtime
     server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     url = f"http://127.0.0.1:{PORT}"
-    brain = "Lumen AI Chat" if NOTES_BACKEND == "lumen" else "Claude"
-    print(f"Reviewer Agent is running at {url}  (Ask: {brain}, Quiz: Claude, model {MODEL})")
+    print(f"Reviewer Agent is running at {url}  (Lumen AI Chat)")
     print("Press Ctrl+C to stop.")
     if "--no-browser" not in sys.argv:
         threading.Timer(0.8, lambda: webbrowser.open(url)).start()

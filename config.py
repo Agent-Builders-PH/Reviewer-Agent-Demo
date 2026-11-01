@@ -13,29 +13,37 @@ for stream in (sys.stdout, sys.stderr):
     if hasattr(stream, "reconfigure"):
         stream.reconfigure(encoding="utf-8", errors="replace")
 
-MODEL = os.getenv("REVIEWER_MODEL", "claude-sonnet-5-5")
-
-NOTES_DIR = ROOT / "notes"
-SUBJECTS = ["bio", "econ", "ph-history"]  # one folder each in notes/
+NOTES_DIR = ROOT / "notes"           # the same files the host gave each Lumen instance
+SUBJECTS = ["bio", "econ", "ph-history"]
 QUIZ_LOG = ROOT / "quiz_log.csv"
 
 # Lumen AI Chat rejects messages over 4,000 characters. We refuse them before
-# any API call, on both backends, so a long paste never costs anything.
+# any API call, so a long paste never costs anything.
 MAX_QUESTION = 4000
 
-# Which brain answers Ask mode: "claude" (default) or "lumen" (the host's demo).
-NOTES_BACKEND = os.getenv("NOTES_BACKEND", "claude").strip().lower()
-
-# Lumen AI Chat (host only). One instance per subject, set up in the Organization Portal.
-LUMEN_BASE_URL = os.getenv("LUMEN_BASE_URL", "https://api.staging.nonlive.lumen.bayanichain.tech")
+# Lumen AI Chat. The host sends you the key, the secret and one instance ID per subject.
+LUMEN_BASE_URL = os.getenv("LUMEN_BASE_URL", "https://api.staging.nonlive.lumen.bayanichain.tech").rstrip("/")
+LUMEN_API_KEY = os.getenv("LUMEN_API_KEY", "")
+LUMEN_API_SECRET = os.getenv("LUMEN_API_SECRET", "")
 LUMEN_INSTANCES = {
     "bio": os.getenv("LUMEN_INSTANCE_BIO", ""),
     "econ": os.getenv("LUMEN_INSTANCE_ECON", ""),
     "ph-history": os.getenv("LUMEN_INSTANCE_PH_HISTORY", ""),
 }
+AI_CHAT = LUMEN_BASE_URL + "/ai_chat"   # every route starts here
 
 
 def subject_dir(subject: str) -> Path:
     if subject not in SUBJECTS:
         raise SystemExit(f"Unknown subject {subject!r}. Pick one of: {', '.join(SUBJECTS)}")
     return NOTES_DIR / subject
+
+
+def instance_for(subject: str) -> str:
+    from helpers import ReviewerError
+    subject_dir(subject)
+    instance = LUMEN_INSTANCES.get(subject, "")
+    if not instance:
+        env = "LUMEN_INSTANCE_" + subject.upper().replace("-", "_")
+        raise ReviewerError(f"Set {env} in .env. The host sends you the instance IDs.")
+    return instance

@@ -89,11 +89,6 @@ header .who b { color: var(--graphite); font-weight: 700; }
   border-radius: 999px; padding: 0 16px; line-height: 30px; cursor: pointer; font-weight: 700;
 }
 .modes button[aria-pressed="true"] { background: var(--ink); color: var(--pad); }
-.brain { margin-left: auto; display: flex; gap: 0; align-items: center; color: var(--soft); font-size: 15px; }
-.brain span { margin-right: 8px; }
-.brain button { border-radius: 0; padding: 0 12px; line-height: 26px; border-width: 2px; font-size: 15px; }
-.brain button:first-of-type { border-radius: 999px 0 0 999px; }
-.brain button:last-of-type { border-radius: 0 999px 999px 0; border-left-width: 0; }
 .modes { flex-wrap: wrap; align-items: center; }
 
 form.ask { display: flex; gap: 8px; }
@@ -152,6 +147,11 @@ aside { display: grid; gap: 18px; }
 .card li { font-size: 15px; line-height: 24px; display: flex; justify-content: space-between; gap: 8px; }
 .card li span { color: var(--soft); white-space: nowrap; }
 .card p { font-size: 14px; line-height: 21px; color: var(--soft); margin: 8px 0 0; }
+span.chip { cursor: default; }
+.tr { font-size: 15px; line-height: var(--line); }
+.tr b { color: var(--ink); }
+.linkbtn { margin-left: auto; border: 0; background: none; color: var(--ink); text-decoration: underline dotted; cursor: pointer; font-size: 15px; padding: 0; }
+.linkbtn:disabled { opacity: .5; cursor: wait; }
 .theme { border: 0; background: none; color: var(--soft); cursor: pointer; font-size: 14px; text-decoration: underline; padding: 0; }
 </style>
 </head>
@@ -161,7 +161,7 @@ aside { display: grid; gap: 18px; }
     <img class="logo-light" src="/assets/ab-logo-dark.png" alt="Agent Builders Philippines">
     <img class="logo-dark" src="/assets/ab-logo-white.png" alt="Agent Builders Philippines">
     <h1>Reviewer Agent</h1>
-    <div class="who" id="who">Loading…</div>
+    <div class="who" id="who">Answers and quizzes by <b>Lumen AI Chat</b></div>
   </header>
 
   <div class="layout">
@@ -171,11 +171,7 @@ aside { display: grid; gap: 18px; }
         <div class="modes">
           <button type="button" id="mode-ask" aria-pressed="true">Ask</button>
           <button type="button" id="mode-quiz" aria-pressed="false">Quiz me</button>
-          <div class="brain" id="brain" role="group" aria-label="Who answers Ask questions">
-            <span>Ask with</span>
-            <button type="button" data-brain="claude" aria-pressed="true">Claude</button>
-            <button type="button" data-brain="lumen" aria-pressed="false">Lumen</button>
-          </div>
+          <button type="button" class="linkbtn" id="show-transcript">What Lumen stored (1 credit)</button>
         </div>
 
         <div id="ask-panel">
@@ -187,7 +183,7 @@ aside { display: grid; gap: 18px; }
         </div>
 
         <div id="quiz-panel" hidden>
-          <p>Five questions from your <b id="quiz-subject"></b> notes. Pick a letter; Python grades it.</p>
+          <p>Five questions from your <b id="quiz-subject"></b> notes. Lumen writes them; Python checks and grades them.</p>
           <button class="btn" id="quiz-start" style="line-height:34px">Start the quiz</button>
         </div>
 
@@ -199,7 +195,7 @@ aside { display: grid; gap: 18px; }
       <div class="card">
         <h2>Your notes</h2>
         <ul id="notes"></ul>
-        <p>Each source on the pad opens the note at the page Claude cited.</p>
+        <p>The host gave these files to this subject's Lumen instance. Open one to check an answer.</p>
       </div>
       <div class="card">
         <h2>Quiz history</h2>
@@ -219,8 +215,7 @@ const EXAMPLES = {
 };
 const $ = (id) => document.getElementById(id);
 const logs = {};          // subject -> list of entry elements, kept when you switch tabs
-let state = null, subject = null, mode = "ask", busy = false, brain = "claude";
-const BRAIN_NAME = { claude: "Claude", lumen: "Lumen AI Chat" };
+let state = null, subject = null, mode = "ask", busy = false;
 
 function el(tag, attrs = {}, ...kids) {
   const e = document.createElement(tag);
@@ -239,9 +234,14 @@ async function api(path, body) {
   return data;
 }
 
-function noteLink(title, page) {
-  const href = `/note/${encodeURIComponent(subject)}/${encodeURIComponent(title)}` + (page ? `#page=${page}` : "");
-  return el("a", { class: "chip", href, target: "_blank", rel: "noopener", text: page ? `${title} · p.${page}` : title });
+// A Lumen citation is a source name. If it names one of the local notes, link to that file.
+function sourceChip(subj, title) {
+  const notes = state.subjects.find((s) => s.name === subj).notes;
+  const t = title.toLowerCase();
+  const note = notes.find((n) => t.includes(n.name.toLowerCase()) || n.name.toLowerCase().includes(t));
+  if (!note) return el("span", { class: "chip", text: title });
+  return el("a", { class: "chip", href: `/note/${encodeURIComponent(subj)}/${encodeURIComponent(note.name)}`,
+    target: "_blank", rel: "noopener", text: title });
 }
 
 function addEntry(node) {
@@ -251,14 +251,11 @@ function addEntry(node) {
 
 function setBusy(on) {
   busy = on;
-  $("ask-btn").disabled = on; $("quiz-start").disabled = on;
+  $("ask-btn").disabled = on; $("quiz-start").disabled = on; $("show-transcript").disabled = on;
 }
 
 // ---------------------------------------------------------------- render
 function render() {
-  $("who").innerHTML = "";
-  $("who").append("Ask: ", el("b", { text: BRAIN_NAME[brain] }), " · Quiz: ", el("b", { text: "Claude" }), ` · ${state.model}`);
-  for (const b of document.querySelectorAll("#brain button")) b.setAttribute("aria-pressed", String(b.dataset.brain === brain));
   $("tabs").innerHTML = "";
   for (const s of state.subjects) {
     $("tabs").append(el("button", { role: "tab", "aria-selected": String(s.name === subject), text: s.name,
@@ -268,13 +265,9 @@ function render() {
   $("notes").innerHTML = "";
   for (const n of notes) {
     $("notes").append(el("li", {}, el("a", { href: `/note/${encodeURIComponent(subject)}/${encodeURIComponent(n.name)}`, target: "_blank", rel: "noopener", text: n.name }),
-      el("span", { text: n.pages ? `${n.pages} page${n.pages > 1 ? "s" : ""}` : "text" })));
+      el("span", { text: n.kind })));
   }
-  $("history").innerHTML = "";
-  if (!state.history.length) $("history").append(el("li", { text: "No quizzes yet." }));
-  for (const h of state.history) {
-    $("history").append(el("li", {}, el("span", { text: h.date }), h.subject, el("b", { text: h.score })));
-  }
+  renderHistory();
   $("try").innerHTML = "";
   const ex = EXAMPLES[subject] || [];
   if (ex.length) {
@@ -283,6 +276,12 @@ function render() {
   }
   $("quiz-subject").textContent = subject;
   $("log").replaceChildren(...logs[subject]);
+}
+
+function renderHistory() {
+  $("history").innerHTML = "";
+  if (!state.history.length) $("history").append(el("li", { text: "No quizzes yet." }));
+  for (const h of state.history) $("history").append(el("li", {}, el("span", { text: h.date }), h.subject, el("b", { text: h.score })));
 }
 
 function pick(name) {
@@ -297,7 +296,6 @@ function setMode(m) {
   $("mode-ask").setAttribute("aria-pressed", String(m === "ask"));
   $("mode-quiz").setAttribute("aria-pressed", String(m === "quiz"));
   $("ask-panel").hidden = m !== "ask";
-  $("brain").hidden = m !== "ask";
   $("quiz-panel").hidden = m !== "quiz";
   (m === "ask" ? $("question") : $("quiz-start")).focus();
 }
@@ -307,35 +305,20 @@ async function ask() {
   const question = $("question").value.trim();
   if (!question || busy) return;
   const entry = el("div", { class: "entry" }, el("div", { class: "q" }, el("b", { text: "Q: " }), question),
-    el("div", { class: "thinking", text: "Reading your notes" }));
+    el("div", { class: "thinking", text: "Lumen is reading your notes" }));
   addEntry(entry);
   setBusy(true);
   try {
-    if (brain === "lumen" && !state.lumen[subject]) {
-      const env = "LUMEN_INSTANCE_" + subject.toUpperCase().replace("-", "_");
-      throw new Error(Object.keys(state.lumen).length
-        ? `No Lumen instance for ${subject} yet. Paste its ID after ${env}= in .env, then restart the app.`
-        : "Lumen isn't set up yet. Paste the key, secret and instance IDs from the host into .env (MODULE §7), then restart the app.");
-    }
-    const r = await api("/api/ask", { subject, question, brain });
+    const r = await api("/api/ask", { subject, question });
     entry.lastChild.remove();
     if (r.refused) {
       entry.append(el("div", { class: "mark", text: "✗", "aria-hidden": "true" }), el("div", { class: "refuse", text: r.reply.replace(/^⚠️\s*/, "") }));
     } else {
       entry.append(el("div", { class: "a", text: r.text }));
       const ul = el("ul", { class: "sources" });
-      for (const s of r.sources) {
-        ul.append(el("li", {}, noteLink(s.title, s.page), s.quote ? el("span", { class: "quote", text: `“${s.quote.slice(0, 90)}${s.quote.length > 90 ? "…" : ""}”` }) : null));
-      }
+      for (const s of r.sources) ul.append(el("li", {}, sourceChip(subject, s)));
       entry.append(ul);
       if (r.degraded.length) entry.append(el("div", { class: "error", text: "Some sources were offline: " + r.degraded.join(", ") }));
-    }
-    if (r.brain === "Claude") {
-      const c = r.cache_write > r.cache_read ? `notes saved to cache: ${r.cache_write.toLocaleString()} tokens (the next question reads them)`
-        : r.cache_read ? `notes read from cache: ${r.cache_read.toLocaleString()} tokens` : "";
-      if (c) entry.append(el("div", { class: "cache", text: c }));
-    } else {
-      entry.append(el("div", { class: "cache", text: "answered by Lumen AI Chat" }));
     }
     $("question").value = "";
   } catch (e) {
@@ -347,11 +330,34 @@ async function ask() {
   }
 }
 
+// ---------------------------------------------------------------- transcript
+async function showTranscript() {
+  if (busy) return;
+  const entry = el("div", { class: "entry" }, el("div", { class: "q" }, el("b", { text: "What Lumen stored in this session" })),
+    el("div", { class: "thinking", text: "Reading the transcript" }));
+  addEntry(entry);
+  setBusy(true);
+  try {
+    const r = await api("/api/transcript", { subject });
+    entry.lastChild.remove();
+    if (!r.messages.length) entry.append(el("div", { class: "cache", text: "Nothing yet: ask a question first." }));
+    for (const m of r.messages) {
+      const text = m.content.length > 160 ? m.content.slice(0, 160) + "…" : m.content;
+      entry.append(el("div", { class: "tr" }, el("b", { text: m.role === "user" ? "You: " : "Lumen: " }), text));
+    }
+  } catch (e) {
+    entry.lastChild.remove();
+    entry.append(el("div", { class: "error", text: e.message }));
+  } finally {
+    setBusy(false);
+  }
+}
+
 // ---------------------------------------------------------------- quiz
 async function startQuiz() {
   if (busy) return;
   const forSubject = subject;
-  const entry = el("div", { class: "entry" }, el("div", { class: "thinking", text: `Writing your ${subject} quiz` }));
+  const entry = el("div", { class: "entry" }, el("div", { class: "thinking", text: `Lumen is writing your ${subject} quiz` }));
   addEntry(entry);
   setBusy(true);
   try {
@@ -388,7 +394,7 @@ function showQuestion(entry, quiz, n) {
       if (!r.correct) buttons[letter].classList.add("wrong");
       box.prepend(el("div", { class: "mark", text: r.correct ? "✓" : "✗", "aria-label": r.correct ? "correct" : "wrong" }));
       const why = el("div", { class: "why" }, r.correct ? "Tama! " : `The answer is ${r.answer}. `, r.why, " ");
-      why.append(noteLinkFor(quiz.subject, r.page));
+      if (r.source) why.append(sourceChip(quiz.subject, r.source));
       box.append(why);
       if (r.done) {
         entry.append(el("div", {}, el("div", { class: "score", text: `${r.score}/${r.total}` }),
@@ -408,20 +414,9 @@ function showQuestion(entry, quiz, n) {
   }
 }
 
-function noteLinkFor(subj, page) {
-  // A quiz page has no file name: link the subject's first PDF with that many pages.
-  const notes = state.subjects.find((s) => s.name === subj).notes;
-  const pdf = notes.find((n) => n.pages && n.pages >= page) || notes[0];
-  const saved = subject; subject = subj;
-  const a = noteLink(pdf.name, pdf.pages ? page : null);
-  subject = saved;
-  return a;
-}
-
 async function refreshHistory() {
   try { state = { ...state, history: (await api("/api/state")).history }; } catch { return; }
-  $("history").innerHTML = "";
-  for (const h of state.history) $("history").append(el("li", {}, el("span", { text: h.date }), h.subject, el("b", { text: h.score })));
+  renderHistory();
 }
 
 // ---------------------------------------------------------------- start
@@ -429,9 +424,7 @@ $("ask-form").addEventListener("submit", (e) => { e.preventDefault(); ask(); });
 $("mode-ask").addEventListener("click", () => setMode("ask"));
 $("mode-quiz").addEventListener("click", () => setMode("quiz"));
 $("quiz-start").addEventListener("click", startQuiz);
-for (const b of document.querySelectorAll("#brain button")) {
-  b.addEventListener("click", () => { brain = b.dataset.brain; render(); $("question").focus(); });
-}
+$("show-transcript").addEventListener("click", showTranscript);
 $("theme").addEventListener("click", () => {
   const dark = document.documentElement.dataset.theme
     ? document.documentElement.dataset.theme === "dark"
@@ -439,7 +432,7 @@ $("theme").addEventListener("click", () => {
   document.documentElement.dataset.theme = dark ? "light" : "dark";
 });
 
-api("/api/state").then((s) => { state = s; brain = s.backend === "lumen" ? "lumen" : "claude"; pick(s.subjects[0].name); $("question").focus(); })
+api("/api/state").then((s) => { state = s; pick(s.subjects[0].name); $("question").focus(); })
   .catch((e) => { $("who").textContent = e.message; });
 </script>
 </body>

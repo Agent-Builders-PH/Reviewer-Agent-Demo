@@ -1,77 +1,93 @@
 """Small helpers you can read but don't need to change.
 
-    load_notes(folder)          one subject folder -> a list of Claude document blocks
-    notes_message(notes, text)  the notes first, then your text, as one user message
-    page_count(folder)          the most pages any PDF in the folder has
-    print_with_pages(answer)    print an answer with its sources and pages
-    load_step(name)             import 01_ask.py or 02_quiz.py by name
+    NotesAnswer, Source    the answer shape: text, sources, offline sources
+    ReviewerError          a problem you can fix; the CLI prints it plainly
+    expect(r, status)      stop with a clear message when Lumen says no
+    extract_json(text)     pull the {...} out of a reply that has extra words
+    load_step(name)        import 01_ask.py or 02_quiz.py by name
 """
 from __future__ import annotations
 
-import base64
 import importlib
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 
-from agno.models.message import Message
-from pypdf import PdfReader
-
-NOTE_TYPES = {".pdf", ".md", ".txt"}
+import httpx
 
 
-def load_notes(folder: Path, citations: bool = True) -> list[dict]:
-    """Turn every note in one subject folder into a Claude document block.
+@dataclass
+class Source:
+    title: str                 # Lumen's citation string, e.g. the note's name
 
-    Each block carries the file name as its title, so a citation comes back
-    saying which file (and, for a PDF, which page) it quotes.
 
-    The last block gets a cache_control marker. Claude caches everything up to
-    that marker: the rules plus all the notes. A second question, even a
-    different one, then reads the notes from the cache instead of paying for
-    them again. That only works because notes_message() puts the notes BEFORE
-    the question; anything after the marker is never cached.
+@dataclass
+class NotesAnswer:
+    text: str
+    sources: list[Source] = field(default_factory=list)
+    degraded: list[str] = field(default_factory=list)   # sources that were offline for this turn
 
-    citations=False is for the quiz: structured output and citations can't
-    share a request.
+
+class ReviewerError(Exception):
+    """A problem you can fix (a bad key, no credits, a missing setting)."""
+
+
+class LumenError(ReviewerError):
+    """Lumen answered with an error. status is the HTTP code, code is Lumen's error code."""
+
+    def __init__(self, status: int, code: str, message: str):
+        super().__init__(message)
+        self.status, self.code = status, code
+
+
+# What each Lumen error code means for you, in one sentence.
+FIXES = {
+    "API_KEY_NOT_FOUND": "the Lumen API key is wrong. Check LUMEN_API_KEY in .env.",
+    "API_SECRET_NOT_FOUND": "the Lumen API secret is wrong. Check LUMEN_API_SECRET in .env.",
+    "INVALID_API_CREDENTIALS": "the Lumen key and secret don't match. Copy both again.",
+    "ACCESS_DENIED": "this key has no AI Chat grant. Ask the host to add it.",
+    "VIEW_ONLY_ACCESS": "this key's AI Chat grant is read-only. It needs write access to send messages.",
+    "API_CREDITS_INSUFFICIENT": "this key is out of API credits. Ask the host for more.",
+    "LC_INSUFFICIENT": "the organization is out of Lumen Credits. Tell the host.",
+    "ORG_SUBSCRIPTION_INACTIVE": "the organization's subscription is inactive. Tell the host.",
+    "SESSION_NOT_OWNED": "that session belongs to another key.",
+    "SESSION_NOT_FOR_INSTANCE": "that session belongs to another instance.",
+    "AI_CHAT_SESSION_NOT_FOUND": "that session doesn't exist.",
+    "AI_CHAT_CONFLICT": "that session is archived.",
+    "AI_CHAT_QUERY_TOO_LONG": "the question is too long. Keep it under 4,000 characters.",
+    "VALIDATION_ERROR": "Lumen rejected the request body. Check the JSON you sent.",
+    "FEATURE_DISABLED": "AI Chat is switched off on this gateway. Use the staging LUMEN_BASE_URL from .env.example.",
+    "AI_CHAT_NOT_CONFIGURED": "AI Chat has no model settings on this environment yet. Tell the host.",
+    "AI_CHAT_REPLY_TIMEOUT": "Lumen took over 25 seconds to answer (not charged). Try a shorter question.",
+    "AI_CHAT_MODEL_RATE_LIMITED": "Lumen's model is busy (not charged). Wait a moment and try again.",
+    "RATE_LIMIT_EXCEEDED": "too many requests at once (not charged). Wait a moment and try again.",
+}
+
+
+def expect(r: httpx.Response, status: int) -> dict:
+    """Return the JSON body when Lumen answered with `status`; otherwise raise a clear LumenError.
+
+    Every Lumen error body looks like {"error": {"code": "...", "message": "..."}}.
     """
-    blocks = []
-    for path in sorted(folder.iterdir()):  # same order every time, so the cached prefix matches
-        if path.suffix.lower() not in NOTE_TYPES:
-            continue
-        if path.suffix.lower() == ".pdf":
-            source = {"type": "base64", "media_type": "application/pdf",
-                      "data": base64.standard_b64encode(path.read_bytes()).decode("ascii")}
-        else:
-            source = {"type": "text", "media_type": "text/plain",
-                      "data": path.read_text(encoding="utf-8")}
-        block = {"type": "document", "source": source, "title": path.name}
-        if citations:
-            block["citations"] = {"enabled": True}
-        blocks.append(block)
-    if not blocks:
-        raise SystemExit(f"No notes in {folder}. Add a .pdf, .md or .txt file.")
-    blocks[-1]["cache_control"] = {"type": "ephemeral"}
-    return blocks
+    if r.status_code == status:
+        return r.json()
+    try:
+        code = str(r.json().get("error", {}).get("code", ""))
+    except ValueError:
+        code = ""
+    if r.status_code == 404 and not code:
+        fix = "that instance doesn't exist. Check the instance ID in .env."
+    else:
+        fix = FIXES.get(code, "see the error code in the Lumen AI Chat docs.")
+    raise LumenError(r.status_code, code, f"Lumen said {r.status_code}{' ' + code if code else ''}: {fix}")
 
 
-def notes_message(notes: list[dict], text: str) -> Message:
-    """One user message: all the notes first, then the question (or quiz request) last."""
-    return Message(role="user", content=[*notes, {"type": "text", "text": text}])
-
-
-def page_count(folder: Path) -> int:
-    """The most pages in any PDF in this folder (a quiz page must be 1 to this)."""
-    counts = [len(PdfReader(p).pages) for p in folder.glob("*.pdf")]
-    return max(counts, default=1)
-
-
-def print_with_pages(answer) -> None:
-    """Print a NotesAnswer the long way: the text, then every source with its page and quote."""
-    print(answer.text.strip())
-    for s in answer.sources:
-        page = f" p.{s.page}" if s.page else ""
-        quote = " ".join(s.quote.split())[:70]
-        print(f"   - {s.title}{page}: \"{quote}\"")
+def extract_json(text: str) -> str:
+    """The {...} part of a reply. Models sometimes add a sentence or ```json fences around it."""
+    start, end = text.find("{"), text.rfind("}")
+    if start == -1 or end < start:
+        raise ValueError("the reply has no JSON object in it")
+    return text[start:end + 1]
 
 
 def load_step(name: str):
