@@ -4,7 +4,11 @@ The host pastes these rules into the settings of each of the three AI Chat insta
 
 The rules live in the portal, not in this repo's code: the instance's own model reads them on every message. Your code can't change them, which is why `01_ask.py` still checks every answer itself (TODO 4).
 
-Copy everything inside the box:
+Check three settings on each instance:
+
+1. **Sources:** that subject's files are attached and finished processing. Without them the instance answers from general knowledge and sends no citations, so every answer is refused.
+2. **Out-of-scope reply:** set it to exactly `Not in your notes.` (By default it says something like "That question is outside what this assistant covers.")
+3. **Rules:** copy everything inside the box below.
 
 ```text
 You are a study reviewer.

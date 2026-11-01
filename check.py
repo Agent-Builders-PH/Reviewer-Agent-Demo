@@ -83,6 +83,10 @@ class FakeLumen:
 
 def fake_env():
     import config
+    # Import 01_ask.py with the REAL settings first. It copies LUMEN_API_KEY and
+    # LUMEN_API_SECRET when it is imported; importing it while these fakes are in
+    # place would keep the fake key for the rest of the run (live checks: 401).
+    step("01_ask")
     return mock.patch.multiple(config, LUMEN_API_KEY="key-123", LUMEN_API_SECRET="secret-456",
                                LUMEN_INSTANCES={"bio": "inst-bio", "econ": "inst-econ", "ph-history": "inst-ph"})
 
