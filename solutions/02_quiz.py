@@ -87,9 +87,9 @@ def write_quiz(notes, focus: list[str] | None = None) -> Quiz:
     prompt = QUIZ_PROMPT
     if focus:  # the notes about these are picked first, too
         prompt += ("\nStart with what I got wrong last time: " + "; ".join(focus))[:300]
-    message, _ = quiz_message(notes.subject, prompt, focus)
     problem = ""
     for _ in range(2):  # each try is one Lumen message: 5 credits
+        message, _ = quiz_message(notes.subject, prompt, focus)  # a fresh pick of notes on each try
         reply = notes.send(message).text
         try:
             quiz = parse_quiz(reply)
